@@ -1,0 +1,4 @@
+# Linux: mejor instalarlos con el gestor de paquetes (python-pyqt6, python-evdev).
+# Windows desde el codigo: pip install -r requirements.txt
+PyQt6>=6.5
+evdev>=1.6; sys_platform == "linux"

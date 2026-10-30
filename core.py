@@ -1,0 +1,429 @@
+"""
+kb2pad core - logica del control virtual compartida por Linux (engine.py) y Windows (engine_win.py).
+
+El Mapper recibe eventos con nombres/codigos de evdev y escribe el estado del control
+en un objeto "ui" con write(tipo, codigo, valor) y syn(), igual que evdev.UInput.
+Cada sistema pone su propio ui (uinput en Linux, ViGEm en Windows).
+"""
+import math
+import time
+
+import config as C
+from keycodes import e
+
+LT, RT = "LT", "RT"
+OUT_CODES = {
+    "A": e.BTN_A, "B": e.BTN_B, "X": e.BTN_X, "Y": e.BTN_Y,
+    "LB": e.BTN_TL, "RB": e.BTN_TR, "BACK": e.BTN_SELECT, "START": e.BTN_START,
+    "L3": e.BTN_THUMBL, "R3": e.BTN_THUMBR, "LT": LT, "RT": RT,
+}
+STICK_MAX = 32767
+TICK = 1 / 250
+PAD_NAME = "Microsoft X-Box 360 pad (kb2pad)"
+PAD_BUTTONS = (e.BTN_A, e.BTN_B, e.BTN_X, e.BTN_Y, e.BTN_TL, e.BTN_TR,
+               e.BTN_SELECT, e.BTN_START, e.BTN_MODE, e.BTN_THUMBL, e.BTN_THUMBR)
+TRIGGER_AXIS = {LT: e.ABS_Z, RT: e.ABS_RZ}
+
+
+
+_log_fn = None
+
+
+def set_logger(fn):
+    global _log_fn
+    _log_fn = fn
+
+
+def log(msg):
+    if _log_fn is not None:
+        _log_fn(msg)
+        return
+    try:
+        print(msg, flush=True)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+class EngineConfig:
+    """Config JSON (nombres) -> codigos evdev listos para usar."""
+
+    def __init__(self, raw):
+        k = C.input_code
+        sp = raw["special"]
+        self.toggle_key = k(sp["pause"])
+        self.mouselook_key = k(sp["mouselook"])
+
+        st = raw["sticks"]
+        self.move_keys = tuple(k(n) for n in st["move"])
+        self.cam_keys = tuple(k(n) for n in st["camera"])
+        self.dpad_keys = tuple(k(n) for n in st["dpad"])
+
+        self.buttons = {}            # tecla -> salidas
+        self.mouselook_buttons = {}  # solo con mouse-camara
+        self.combos = {}             # tecla -> (modificador, salidas)
+        self.radial_keys = {}        # tecla -> segundos antes de entrar al radial
+        for b in raw["bindings"]:
+            code = k(b["input"])
+            outs = tuple(OUT_CODES[o] for o in b["outputs"])
+            mods = tuple(OUT_CODES[o] for o in b.get("modifier") or [])
+            if b.get("camera_only"):
+                self.mouselook_buttons[code] = outs
+            elif mods:
+                self.combos[code] = (mods, outs)
+            else:
+                self.buttons[code] = outs
+                if b.get("radial"):
+                    self.radial_keys[code] = max(0.0, float(b.get("radial_hold", 0.0)))
+
+        m = raw["mouse"]
+        self.mouse_full_speed = float(m["full_speed"])
+        self.anti_deadzone = float(m["anti_deadzone"])
+        self.smoothing = float(m["smoothing"])
+        self.invert_y = bool(m["invert_y"])
+
+        r = raw["radial"]
+        self.radial_radius = float(r["radius"])
+        self.radial_deadzone = float(r["deadzone"])
+        self.radial_release_delay = float(r["release_delay"])
+
+        self.combo_delay = float(raw["combo_delay"])
+
+
+def load_engine_config(path):
+    raw = C.load_config(path, create=False)
+    errors, warnings = C.validate(raw)
+    return raw, errors, warnings
+
+
+# ================================================================ helpers
+def code_name(code):
+    name = e.bytype[e.EV_KEY].get(code, str(code))
+    return name if isinstance(name, str) else "/".join(name)
+
+
+def dir_xy(pressed, keys):
+    up, down, left, right = keys
+    return (right in pressed) - (left in pressed), (down in pressed) - (up in pressed)
+
+
+def unit_stick(x, y):
+    m = math.hypot(x, y)
+    if m > 1:
+        x, y = x / m, y / m
+    return int(round(x * STICK_MAX)), int(round(y * STICK_MAX))
+
+
+def press_outputs(st, outputs):
+    for out in outputs:
+        if out in TRIGGER_AXIS:
+            st[(e.EV_ABS, TRIGGER_AXIS[out])] = 255
+        else:
+            st[(e.EV_KEY, out)] = 1
+
+
+# ================================================================ mapper
+class Mapper:
+    def __init__(self, ui, mice, cfg, debug=False):
+        self.ui = ui
+        self.mice = mice
+        self.cfg = cfg
+        self.debug = debug
+        self.pressed = set()
+        self.enabled = True
+        self.mouselook = False
+        self.grabbed = False
+        self.acc_x = self.acc_y = 0
+        self.vel_x = self.vel_y = 0.0
+        self.mouse_xy = (0.0, 0.0)
+        self.radial_key = None
+        self.radial_pos = [0.0, 0.0]
+        self.radial_out = (0.0, 0.0)
+        self.radial_pending = {}
+        self.radial_release = {}
+        self.combo_t = {}
+        self.combo_fired = set()
+        self.last = {}
+        self.last_tick = time.monotonic()
+        self.push()
+
+    # ---------- salida ----------
+    def compute(self):
+        cfg = self.cfg
+        p = self.pressed
+        st = {}
+        mx, my = dir_xy(p, cfg.move_keys)
+        st[(e.EV_ABS, e.ABS_X)], st[(e.EV_ABS, e.ABS_Y)] = unit_stick(mx, my)
+
+        cx, cy = dir_xy(p, cfg.cam_keys)            # teclas de camara ganan
+        if not (cx or cy):
+            cx, cy = self.cam_xy()
+        st[(e.EV_ABS, e.ABS_RX)], st[(e.EV_ABS, e.ABS_RY)] = unit_stick(cx, cy)
+
+        hx, hy = dir_xy(p, cfg.dpad_keys)
+        st[(e.EV_ABS, e.ABS_HAT0X)] = hx
+        st[(e.EV_ABS, e.ABS_HAT0Y)] = hy
+
+        for axis in TRIGGER_AXIS.values():
+            st[(e.EV_ABS, axis)] = 0
+        for b in PAD_BUTTONS:
+            st[(e.EV_KEY, b)] = 0
+
+        maps = (cfg.buttons, cfg.mouselook_buttons) if self.mouselook else (cfg.buttons,)
+        for mp in maps:
+            for code, outs in mp.items():
+                if code in p:
+                    press_outputs(st, outs)
+        for code, (mods, outs) in cfg.combos.items():
+            if code in p:
+                press_outputs(st, mods)
+                if code in self.combo_fired:
+                    press_outputs(st, outs)
+        return st
+
+    def cam_xy(self):
+        if self.radial_key is not None:
+            return self.radial_out
+        if self.radial_release:
+            return (0.0, 0.0)
+        if self.mouselook:
+            return self.mouse_xy
+        return (0.0, 0.0)
+
+    def push(self):
+        new = self.compute()
+        changed = False
+        for (etype, code), value in new.items():
+            if self.last.get((etype, code)) != value:
+                self.ui.write(etype, code, value)
+                changed = True
+        if changed:
+            self.ui.syn()
+        self.last = new
+
+    # ---------- mouse ----------
+    def update_grab(self):
+        want = self.enabled and (self.mouselook or self.radial_key is not None)
+        if want == self.grabbed:
+            return
+        for m in self.mice:
+            try:
+                m.grab() if want else m.ungrab()
+            except OSError:
+                pass
+        self.grabbed = want
+
+    def reset_mouse_motion(self):
+        self.acc_x = self.acc_y = 0
+        self.vel_x = self.vel_y = 0.0
+        self.mouse_xy = (0.0, 0.0)
+        self.last_tick = time.monotonic()
+
+    # ---------- modos ----------
+    def release_all(self):
+        self.pressed.clear()
+        self.combo_t.clear()
+        self.combo_fired.clear()
+        self.radial_key = None
+        self.radial_out = (0.0, 0.0)
+        self.radial_pending.clear()
+        self.radial_release.clear()
+
+    def set_config(self, cfg):
+        self.release_all()
+        self.push()                    # suelta todo con la config vieja
+        self.cfg = cfg
+        self.reset_mouse_motion()
+        self.update_grab()
+        self.push()
+
+    def set_mouselook(self, on):
+        self.mouselook = on
+        self.reset_mouse_motion()
+        self.pressed -= set(self.cfg.mouselook_buttons)
+        self.update_grab()
+        log("Mouse = camara (stick derecho)" if on else "Mouse = normal (scrcpy)")
+        self.push()
+
+    def radial_start(self, key):
+        self.radial_key = key
+        self.radial_pos = [0.0, 0.0]
+        self.radial_out = (0.0, 0.0)
+        self.reset_mouse_motion()
+        self.update_grab()
+
+    def radial_end(self, key):
+        # centra el stick con el boton aun presionado (el juego selecciona) y lo suelta despues
+        self.radial_key = None
+        self.radial_out = (0.0, 0.0)
+        self.radial_release[key] = time.monotonic() + self.cfg.radial_release_delay
+        self.reset_mouse_motion()
+        self.update_grab()
+
+    def radial_move(self, dx, dy):
+        cfg = self.cfg
+        x = self.radial_pos[0] + dx / cfg.radial_radius
+        y = self.radial_pos[1] + dy / cfg.radial_radius * (-1 if cfg.invert_y else 1)
+        m = math.hypot(x, y)
+        if m > 1:
+            x, y = x / m, y / m
+            m = 1.0
+        self.radial_pos = [x, y]
+        if m >= cfg.radial_deadzone:
+            self.radial_out = (x / m, y / m)
+
+    def radial_key_down(self, key):
+        self.radial_release.pop(key, None)
+        self.pressed.add(key)
+        if self.radial_key is not None:
+            return
+        if self.cfg.radial_keys[key] <= 0:
+            self.radial_start(key)
+        else:
+            self.radial_pending[key] = time.monotonic()
+
+    def radial_key_up(self, key):
+        if key == self.radial_key:
+            self.radial_end(key)
+        else:
+            self.radial_pending.pop(key, None)
+            self.pressed.discard(key)
+
+    # ---------- eventos ----------
+    def handle(self, dev, ev):
+        cfg = self.cfg
+        if ev.type == e.EV_REL:
+            if not self.enabled:
+                return
+            if self.radial_key is not None:
+                if ev.code == e.REL_X:
+                    self.radial_move(ev.value, 0)
+                    self.push()
+                elif ev.code == e.REL_Y:
+                    self.radial_move(0, ev.value)
+                    self.push()
+            elif self.mouselook:
+                if ev.code == e.REL_X:
+                    self.acc_x += ev.value
+                elif ev.code == e.REL_Y:
+                    self.acc_y += ev.value
+            return
+        if ev.type != e.EV_KEY or ev.value == 2:
+            return
+        if self.debug and ev.value == 1:
+            dname = getattr(dev, "name", "?")
+            log(f"[tecla] {code_name(ev.code)} ({ev.code})  <- {dname}")
+
+        if ev.code == cfg.toggle_key:
+            if ev.value == 1:
+                self.enabled = not self.enabled
+                self.release_all()
+                if self.mouselook:
+                    self.set_mouselook(False)
+                else:
+                    self.update_grab()
+                    self.push()
+                log("ACTIVO" if self.enabled else "PAUSADO")
+            return
+        if not self.enabled:
+            return
+        if ev.code == cfg.mouselook_key:
+            if ev.value == 1:
+                self.set_mouselook(not self.mouselook)
+            return
+
+        if ev.code in cfg.radial_keys:
+            if ev.value == 1:
+                self.radial_key_down(ev.code)
+            else:
+                self.radial_key_up(ev.code)
+            self.push()
+            return
+
+        if ev.value == 1:
+            self.pressed.add(ev.code)
+            if ev.code in cfg.combos:
+                self.combo_t[ev.code] = time.monotonic()
+                self.combo_fired.discard(ev.code)
+        else:
+            self.pressed.discard(ev.code)
+            self.combo_t.pop(ev.code, None)
+            self.combo_fired.discard(ev.code)
+        self.push()
+
+    # ---------- tiempo ----------
+    def mouse_tick(self, now):
+        cfg = self.cfg
+        dt = now - self.last_tick
+        if dt < TICK:
+            return TICK - dt
+        self.last_tick = now
+        ix, iy = self.acc_x / dt, self.acc_y / dt
+        self.acc_x = self.acc_y = 0
+        self.vel_x += cfg.smoothing * (ix - self.vel_x)
+        self.vel_y += cfg.smoothing * (iy - self.vel_y)
+        sx = self.vel_x / cfg.mouse_full_speed
+        sy = self.vel_y / cfg.mouse_full_speed
+        if cfg.invert_y:
+            sy = -sy
+        m = math.hypot(sx, sy)
+        if m < 0.02:
+            self.vel_x = self.vel_y = 0.0
+            self.mouse_xy = (0.0, 0.0)
+        else:
+            mag = cfg.anti_deadzone + (1 - cfg.anti_deadzone) * min(m, 1.0)
+            self.mouse_xy = (sx / m * mag, sy / m * mag)
+        self.push()
+        return TICK
+
+    def service(self):
+        """Lo que depende del tiempo. Regresa el timeout para select (None = nada pendiente)."""
+        if not self.enabled:
+            return None
+        now = time.monotonic()
+        waits = []
+        changed = False
+
+        for key, until in list(self.radial_release.items()):
+            if now >= until:
+                del self.radial_release[key]
+                self.pressed.discard(key)
+                changed = True
+            else:
+                waits.append(until - now)
+
+        for key, t0 in list(self.radial_pending.items()):
+            remaining = t0 + self.cfg.radial_keys.get(key, 0.0) - now
+            if remaining <= 0:
+                del self.radial_pending[key]
+                if self.radial_key is None:
+                    self.radial_start(key)
+                    changed = True
+            else:
+                waits.append(remaining)
+
+        if self.mouselook and self.radial_key is None and not self.radial_release:
+            waits.append(self.mouse_tick(now))
+
+        for code, t0 in self.combo_t.items():
+            if code in self.combo_fired:
+                continue
+            remaining = t0 + self.cfg.combo_delay - now
+            if remaining <= 0:
+                self.combo_fired.add(code)
+                changed = True
+            else:
+                waits.append(remaining)
+
+        if changed:
+            self.push()
+        return min(waits) if waits else None
+
+
+# ================================================================ resumen
+def summary(cfg_raw):
+    n = len(cfg_raw["bindings"])
+    radial = [C.input_label(b["input"]) for b in cfg_raw["bindings"]
+              if b.get("radial") and not b.get("modifier") and not b.get("camera_only")]
+    return f"{n} asignaciones" + (f", radial en: {', '.join(radial)}" if radial else "")
+
+

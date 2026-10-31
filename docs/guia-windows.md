@@ -78,9 +78,14 @@ Cualquier cambio que guardes se aplica al momento, aunque el control esté corri
 3. **Bloq Mayús** activa el **mouse como cámara**: el cursor se queda quieto y el mouse mueve el
    stick derecho. Presiónalo otra vez para soltar el mouse (en menús, por ejemplo).
 4. **F12** pausa kb2pad. Úsalo cuando vayas a escribir en otra ventana, porque kb2pad lee el
-   teclado aunque la ventana del juego no tenga el foco.
+   teclado aunque la ventana del juego no tenga el foco. `Alt + Tab` no manda nada al juego.
 
-La tabla de controles por defecto está en el [README](../README.md#controles-por-defecto).
+**Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta),
+**Alt + 3** (Arco) o **Alt + Q** (Por defecto). La app muestra el modo actual y avisa con una
+notificación. Los modos se editan en la pestaña **Botones**: elige el modo arriba y cambia solo
+las teclas que quieras para esa arma.
+
+La tabla de controles y de modos está en el [README](../README.md#controles-por-defecto).
 
 ## Parte 5. Apagar la pantalla del celular
 
@@ -88,14 +93,14 @@ scrcpy tiene la opción `--turn-screen-off`, pero en algunos celulares (por ejem
 también apaga la imagen que se transmite y la ventana queda en negro. Lo que sí funciona es el
 atajo de scrcpy **una vez que el juego ya está en pantalla**:
 
-1. Con el juego ya visible en la ventana, presiona **F12** para pausar kb2pad.
-   (La `O` es `RT` en el mapeo, y así no se la mandas al juego.)
-2. Haz clic en la ventana del juego para que tenga el foco.
-3. Presiona **Alt + O**. La pantalla del celular se apaga y el juego sigue en la ventana.
-4. Presiona **F12** otra vez para reanudar kb2pad y sigue jugando.
+1. Con el juego ya visible, haz clic en la ventana del juego para que tenga el foco.
+2. Presiona **Alt + O**. La pantalla del celular se apaga y el juego sigue en la ventana.
 
-Para volver a prender la pantalla del celular: **F12**, clic en la ventana, **Alt + Shift + O**,
-y **F12** para reanudar.
+Para volver a prenderla: **Alt + Shift + O**.
+
+Mientras Alt está presionado, kb2pad no manda nada al juego, así que la `O` (que es `RT`) no
+llega al juego. Si desactivaste esa opción en *Sticks y teclas especiales*, pausa antes con
+**F12** y reanuda después.
 
 Si con `Alt + O` la ventana también se pone negra, prende la pantalla con `Alt + Shift + O` y, en
 su lugar, baja el brillo del celular al mínimo.

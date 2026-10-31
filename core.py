@@ -52,33 +52,29 @@ def log(msg):
 class EngineConfig:
     """Config JSON (nombres) -> codigos evdev listos para usar."""
 
-    def __init__(self, raw):
+    def __init__(self, raw, mode=None):
         k = C.input_code
         sp = raw["special"]
         self.toggle_key = k(sp["pause"])
         self.mouselook_key = k(sp["mouselook"])
 
+        # modos: Alt + tecla
+        self.alt_keys = {k(n) for n in C.MODE_MODIFIERS}
+        self.alt_blocks = bool(sp.get("alt_blocks", True))
+        self.mode_hotkeys = {}       # tecla -> nombre del modo
+        if sp.get("mode_default"):
+            self.mode_hotkeys[k(sp["mode_default"])] = C.DEFAULT_MODE
+        for m in raw.get("modes") or []:
+            if m.get("hotkey"):
+                self.mode_hotkeys[k(m["hotkey"])] = m["name"]
+        self.mode_maps = {name: self._build(C.effective_bindings(raw, name))
+                          for name in C.mode_names(raw)}
+        self.start_mode = raw.get("start_mode") or C.DEFAULT_MODE
+
         st = raw["sticks"]
         self.move_keys = tuple(k(n) for n in st["move"])
         self.cam_keys = tuple(k(n) for n in st["camera"])
         self.dpad_keys = tuple(k(n) for n in st["dpad"])
-
-        self.buttons = {}            # tecla -> salidas
-        self.mouselook_buttons = {}  # solo con mouse-camara
-        self.combos = {}             # tecla -> (modificador, salidas)
-        self.radial_keys = {}        # tecla -> segundos antes de entrar al radial
-        for b in raw["bindings"]:
-            code = k(b["input"])
-            outs = tuple(OUT_CODES[o] for o in b["outputs"])
-            mods = tuple(OUT_CODES[o] for o in b.get("modifier") or [])
-            if b.get("camera_only"):
-                self.mouselook_buttons[code] = outs
-            elif mods:
-                self.combos[code] = (mods, outs)
-            else:
-                self.buttons[code] = outs
-                if b.get("radial"):
-                    self.radial_keys[code] = max(0.0, float(b.get("radial_hold", 0.0)))
 
         m = raw["mouse"]
         self.mouse_full_speed = float(m["full_speed"])
@@ -92,6 +88,34 @@ class EngineConfig:
         self.radial_release_delay = float(r["release_delay"])
 
         self.combo_delay = float(raw["combo_delay"])
+        self.set_mode(mode if mode in self.mode_maps else self.start_mode)
+
+    @staticmethod
+    def _build(bindings):
+        k = C.input_code
+        buttons = {}            # tecla -> salidas
+        mouselook_buttons = {}  # solo con mouse-camara
+        combos = {}             # tecla -> (modificador, salidas)
+        radial_keys = {}        # tecla -> segundos antes de entrar al radial
+        for b in bindings:
+            code = k(b["input"])
+            outs = tuple(OUT_CODES[o] for o in b["outputs"])
+            mods = tuple(OUT_CODES[o] for o in b.get("modifier") or [])
+            if b.get("camera_only"):
+                mouselook_buttons[code] = outs
+            elif mods:
+                combos[code] = (mods, outs)
+            else:
+                buttons[code] = outs
+                if b.get("radial"):
+                    radial_keys[code] = max(0.0, float(b.get("radial_hold", 0.0)))
+        return buttons, mouselook_buttons, combos, radial_keys
+
+    def set_mode(self, name):
+        if name not in self.mode_maps:
+            name = C.DEFAULT_MODE
+        self.mode = name
+        self.buttons, self.mouselook_buttons, self.combos, self.radial_keys = self.mode_maps[name]
 
 
 def load_engine_config(path):
@@ -150,9 +174,11 @@ class Mapper:
         self.radial_release = {}
         self.combo_t = {}
         self.combo_fired = set()
+        self.consumed = set()         # teclas usadas con Alt: su "soltar" se ignora
         self.last = {}
         self.last_tick = time.monotonic()
         self.push()
+        log(f"Modo: {cfg.mode}")
 
     # ---------- salida ----------
     def compute(self):
@@ -229,6 +255,7 @@ class Mapper:
     # ---------- modos ----------
     def release_all(self):
         self.pressed.clear()
+        self.consumed.clear()
         self.combo_t.clear()
         self.combo_fired.clear()
         self.radial_key = None
@@ -239,10 +266,27 @@ class Mapper:
     def set_config(self, cfg):
         self.release_all()
         self.push()                    # suelta todo con la config vieja
+        if self.cfg.mode in cfg.mode_maps:
+            cfg.set_mode(self.cfg.mode)   # al recargar se queda en el mismo modo
         self.cfg = cfg
         self.reset_mouse_motion()
         self.update_grab()
         self.push()
+
+    def switch_mode(self, name):
+        """Cambia de modo sin soltar las teclas que sigues presionando (moverte, correr)."""
+        if self.radial_key is not None:
+            self.radial_key = None
+            self.radial_out = (0.0, 0.0)
+        self.radial_pending.clear()
+        self.radial_release.clear()
+        self.combo_t.clear()
+        self.combo_fired.clear()
+        self.cfg.set_mode(name)
+        self.reset_mouse_motion()
+        self.update_grab()
+        self.push()
+        log(f"Modo: {self.cfg.mode}")
 
     def set_mouselook(self, on):
         self.mouselook = on
@@ -334,6 +378,21 @@ class Mapper:
             return
         if not self.enabled:
             return
+
+        # Alt + tecla: cambio de modo; con Alt presionado no se manda nada mas al juego
+        if ev.value == 0 and ev.code in self.consumed:
+            self.consumed.discard(ev.code)
+            return
+        if ev.value == 1 and ev.code not in cfg.alt_keys and any(a in self.pressed for a in cfg.alt_keys):
+            name = cfg.mode_hotkeys.get(ev.code)
+            if name is not None:
+                self.consumed.add(ev.code)
+                self.switch_mode(name)
+                return
+            if cfg.alt_blocks:
+                self.consumed.add(ev.code)
+                return
+
         if ev.code == cfg.mouselook_key:
             if ev.value == 1:
                 self.set_mouselook(not self.mouselook)
@@ -432,6 +491,11 @@ def summary(cfg_raw):
     n = len(cfg_raw["bindings"])
     radial = [C.input_label(b["input"]) for b in cfg_raw["bindings"]
               if b.get("radial") and not b.get("modifier") and not b.get("camera_only")]
-    return f"{n} asignaciones" + (f", radial en: {', '.join(radial)}" if radial else "")
+    text = f"{n} asignaciones" + (f", radial en: {', '.join(radial)}" if radial else "")
+    sp = cfg_raw["special"]
+    modes = [f"{C.DEFAULT_MODE} (Alt+{C.input_label(sp['mode_default'])})"] if sp.get("mode_default") else []
+    modes += [m["name"] + (f" (Alt+{C.input_label(m['hotkey'])})" if m.get("hotkey") else "")
+              for m in cfg_raw.get("modes") or []]
+    return text + (f"; modos: {', '.join(modes)}" if modes else "")
 
 

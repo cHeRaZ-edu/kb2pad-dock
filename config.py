@@ -121,42 +121,70 @@ def binding(inp, outs, note="", modifier=None, radial=False, hold=0.0, camera_on
     }
 
 
+DEFAULT_MODE = "Por defecto"     # nombre del modo base (sin cambios)
+
+DEFAULT_BINDINGS = [
+    binding("KEY_SPACE", ["A"], "Saltar"),
+    binding("KEY_Q", ["RB"], "Mirar al frente / eslinga; sostener = menu radial",
+            radial=True, hold=0.20),
+    binding("KEY_F", ["B"], "Golpe fuerte"),
+    binding("BTN_RIGHT", ["B"], "Golpe fuerte (click der)"),
+    binding("KEY_R", ["RT"], "Cubrirse"),
+    binding("BTN_LEFT", ["Y"], "Golpe normal (click izq)", camera_only=True),
+    binding("KEY_C", ["Y", "B"], "Golpe fuerte + normal"),
+    binding("KEY_E", ["X"], "Consumir objeto"),
+    binding("KEY_LEFTCTRL", ["LB"], "Menu radial de objetos", radial=True, hold=0.0),
+    binding("KEY_LEFTSHIFT", ["L3"], "Correr"),
+    binding("BTN_EXTRA", ["RT"], "Cubrirse (lateral 2)"),
+    binding("BTN_SIDE", ["A"], "Eslinga (lateral 1)", modifier=["RB"]),
+    binding("BTN_MIDDLE", ["A"], "Disparar eslinga (click rueda)", modifier=["RB"]),
+    binding("KEY_U", ["LT"], "LT"),
+    binding("KEY_O", ["RT"], "RT"),
+    binding("KEY_1", ["Y"], "Compañero (LT+Y)", modifier=["LT"]),
+    binding("KEY_2", ["B"], "Compañero (LT+B)", modifier=["LT"]),
+    binding("KEY_3", ["X"], "Compañero (LT+X)", modifier=["LT"]),
+    binding("KEY_4", ["A"], "Especial (LT+A)", modifier=["LT"]),
+    binding("KEY_5", ["LT"], "Especial Felyne (LT+RT)", modifier=["RT"]),
+    binding("KEY_G", ["LT"], "Fabricar", modifier=["DPAD_UP"]),
+    binding("KEY_TAB", ["RB"], "Cambiar objetivo", modifier=["DPAD_RIGHT"]),
+    binding("KEY_T", ["RB"], "Preparar trampa", modifier=["B"]),
+    binding("KEY_M", ["BACK"], "Select"),
+    binding("KEY_ESC", ["START"], "Start / menu"),
+]
+
+# Cada modo solo guarda las teclas que cambia; lo demas lo hereda de "Por defecto".
+DEFAULT_MODES = [
+    {"name": "Espada", "hotkey": "KEY_1", "bindings": []},
+    {"name": "Ballesta", "hotkey": "KEY_2", "bindings": [
+        binding("BTN_LEFT", ["RT"], "Disparar (click izq)", camera_only=True),
+        binding("BTN_RIGHT", ["Y"], "Cubrirse (click der)"),
+        binding("KEY_R", ["RB"], "Recargar (LB + RB)", modifier=["LB"]),
+        binding("KEY_V", ["B"], "Modo misil"),
+    ]},
+    {"name": "Arco", "hotkey": "KEY_3", "bindings": [
+        binding("BTN_LEFT", ["RT"], "Disparar (click izq)", camera_only=True),
+        binding("BTN_RIGHT", ["Y"], "Y (click der)"),
+        binding("KEY_R", ["Y"], "Y"),
+    ]},
+]
+
 DEFAULT_CONFIG = {
-    "version": 1,
+    "version": 2,
     "special": {
         "pause": "KEY_F12",
         "mouselook": "KEY_CAPSLOCK",
+        "mode_default": "KEY_Q",     # Alt + esta tecla = volver a "Por defecto"
+        "alt_blocks": True,          # con Alt presionado no se manda nada al juego
+        "notify_mode": True,         # notificacion al cambiar de modo (la muestra la GUI)
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
         "move": ["KEY_W", "KEY_S", "KEY_A", "KEY_D"],
         "camera": ["KEY_I", "KEY_K", "KEY_J", "KEY_L"],
         "dpad": ["KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT"],
     },
-    "bindings": [
-        binding("KEY_SPACE", ["A"], "Saltar"),
-        binding("KEY_Q", ["RB"], "Mirar al frente / eslinga; sostener = menu radial",
-                radial=True, hold=0.20),
-        binding("KEY_V", ["RB"], "RB sin radial (apuntar moviendo la camara)"),
-        binding("KEY_F", ["B"], "Golpe fuerte"),
-        binding("BTN_RIGHT", ["B"], "Golpe fuerte (click der)"),
-        binding("KEY_R", ["Y"], "Golpe normal"),
-        binding("BTN_LEFT", ["Y"], "Golpe normal (click izq)", camera_only=True),
-        binding("KEY_C", ["Y", "B"], "Golpe fuerte + normal"),
-        binding("KEY_E", ["X"], "Consumir objeto"),
-        binding("KEY_LEFTCTRL", ["LB"], "Menu radial de objetos", radial=True, hold=0.0),
-        binding("KEY_LEFTSHIFT", ["L3"], "Correr"),
-        binding("BTN_EXTRA", ["RT"], "Cubrirse (lateral 2)"),
-        binding("BTN_SIDE", ["A"], "Eslinga (lateral 1)", modifier=["RB"]),
-        binding("BTN_MIDDLE", ["R3"], "Click de rueda"),
-        binding("KEY_U", ["LT"], "LT"),
-        binding("KEY_O", ["RT"], "RT"),
-        binding("KEY_1", ["B"], "Compañero (LT+B)", modifier=["LT"]),
-        binding("KEY_2", ["X"], "Compañero (LT+X)", modifier=["LT"]),
-        binding("KEY_3", ["A"], "Compañero (LT+A)", modifier=["LT"]),
-        binding("KEY_4", ["Y"], "LT+Y", modifier=["LT"]),
-        binding("KEY_M", ["BACK"], "Select"),
-        binding("KEY_ESC", ["START"], "Start / menu"),
-    ],
+    "bindings": DEFAULT_BINDINGS,
+    "modes": DEFAULT_MODES,
+    "start_mode": DEFAULT_MODE,
     "combo_delay": 0.05,
     "mouse": {
         "full_speed": 1500.0,
@@ -197,6 +225,40 @@ def default_config():
     return copy.deepcopy(DEFAULT_CONFIG)
 
 
+# ---------------------------------------------------------------- modos
+MODE_MODIFIERS = ("KEY_LEFTALT", "KEY_RIGHTALT")   # el atajo de modo es Alt + tecla
+
+
+def binding_key(b):
+    """Identidad de una asignacion para que un modo la reemplace: tecla + 'solo mouse-camara'."""
+    return (b.get("input", ""), bool(b.get("camera_only")))
+
+
+def find_mode(cfg, name):
+    for m in cfg.get("modes") or []:
+        if m.get("name") == name:
+            return m
+    return None
+
+
+def mode_names(cfg):
+    return [DEFAULT_MODE] + [m.get("name", "") for m in cfg.get("modes") or []]
+
+
+def effective_bindings(cfg, mode_name=DEFAULT_MODE):
+    """Asignaciones que valen en un modo: las de "Por defecto" con los cambios del modo encima.
+    Un cambio sin salidas desactiva esa tecla en el modo."""
+    base = list(cfg.get("bindings") or [])
+    mode = find_mode(cfg, mode_name) if mode_name != DEFAULT_MODE else None
+    if not mode:
+        return base
+    overrides = list(mode.get("bindings") or [])
+    replaced = {binding_key(b) for b in overrides}
+    out = [b for b in base if binding_key(b) not in replaced]
+    out += [b for b in overrides if b.get("outputs")]
+    return out
+
+
 # ---------------------------------------------------------------- carga / guardado
 def normalize(data):
     """Rellena lo que falte con los defaults (por si el archivo es viejo o se edito a mano)."""
@@ -208,8 +270,21 @@ def normalize(data):
         elif isinstance(val, dict) and isinstance(out[key], dict):
             for sk, sv in val.items():
                 out[key].setdefault(sk, copy.deepcopy(sv))
+    out["bindings"] = _norm_bindings(out.get("bindings"))
+    modes = []
+    for m in out.get("modes") or []:
+        if isinstance(m, dict) and m.get("name"):
+            modes.append({"name": str(m["name"]), "hotkey": m.get("hotkey") or "",
+                          "bindings": _norm_bindings(m.get("bindings"))})
+    out["modes"] = modes
+    if out.get("start_mode") not in mode_names(out):
+        out["start_mode"] = DEFAULT_MODE
+    return out
+
+
+def _norm_bindings(items):
     bl = []
-    for b in out.get("bindings") or []:
+    for b in items or []:
         if not isinstance(b, dict):
             continue
         nb = binding("", [])
@@ -217,8 +292,7 @@ def normalize(data):
         nb["outputs"] = list(nb.get("outputs") or [])
         nb["modifier"] = list(nb.get("modifier") or [])
         bl.append(nb)
-    out["bindings"] = bl
-    return out
+    return bl
 
 
 def load_config(path=CONFIG_PATH, create=True):
@@ -265,6 +339,36 @@ def validate(cfg):
         n = cfg["special"].get(k, "")
         if check(n, f"Tecla especial {label}"):
             use(n, f"especial {label}")
+
+    hotkeys = {}
+    n = cfg["special"].get("mode_default", "")
+    if n and check(n, "Atajo de 'Por defecto'"):
+        hotkeys[n] = DEFAULT_MODE
+    names = set()
+    for m in cfg.get("modes") or []:
+        name = m.get("name", "").strip()
+        if not name or name == DEFAULT_MODE:
+            errors.append(f"Modo sin nombre o con el nombre reservado '{DEFAULT_MODE}'")
+        elif name in names:
+            errors.append(f"Hay dos modos llamados '{name}'")
+        names.add(name)
+        hk = m.get("hotkey", "")
+        if hk:
+            if check(hk, f"Atajo del modo {name}"):
+                if hk in hotkeys:
+                    errors.append(f"Alt + {input_label(hk)} es el atajo de '{hotkeys[hk]}' y de '{name}'")
+                hotkeys[hk] = name
+        seen = {}
+        for b in m.get("bindings") or []:
+            where = f"Modo {name}: {b.get('note') or b.get('input')}"
+            check(b.get("input", ""), where)
+            for o in list(b.get("outputs", [])) + list(b.get("modifier", [])):
+                if o not in OUTPUTS:
+                    errors.append(f"{where}: salida desconocida '{o}'")
+            k = binding_key(b)
+            if k in seen:
+                warnings.append(f"Modo {name}: '{input_label(k[0])}' esta dos veces")
+            seen[k] = True
 
     dirs = ("arriba", "abajo", "izquierda", "derecha")
     for sk, label in (("move", "Movimiento"), ("camera", "Camara"), ("dpad", "D-pad")):

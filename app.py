@@ -18,13 +18,13 @@ from pathlib import Path
 
 from PyQt6.QtCore import (QEvent, QLibraryInfo, QLocale, QProcess, QProcessEnvironment, Qt, QTimer,
                           QTranslator, QUrl, pyqtSignal)
-from PyQt6.QtGui import QAction, QDesktopServices, QFont, QGuiApplication, QKeySequence
+from PyQt6.QtGui import QAction, QDesktopServices, QFont, QGuiApplication, QIcon, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout,
-    QWidget,
+    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+    QPushButton, QSpinBox, QSplitter, QStyle, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 import config as C
@@ -296,20 +296,58 @@ class BindingDialog(QDialog):
 
 # ================================================================ pestanas
 class BindingsTab(QWidget):
+    """Asignaciones de "Por defecto" y de cada modo. Un modo solo guarda lo que cambia."""
     changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.bindings = []
+        self.bindings = []           # "Por defecto"
+        self.modes = []              # [{"name", "hotkey", "bindings"}]
+        self.mode_default = ""       # atajo de "Por defecto"
+        self.start_mode = C.DEFAULT_MODE
+        self.rows = []               # [(origen, indice)]: origen = "base" | "mode"
+        self._loading = False
         lay = QVBoxLayout(self)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Tecla", "Salida", "Modificador", "Tipo", "Nota"])
+
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("Modo:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.setMinimumWidth(200)
+        self.mode_combo.currentIndexChanged.connect(self._mode_changed)
+        bar.addWidget(self.mode_combo)
+        bar.addWidget(QLabel("  Atajo: Alt +"))
+        self.hotkey = KeyField()
+        self.hotkey.changed.connect(self._hotkey_changed)
+        bar.addWidget(self.hotkey)
+        for text, slot in (("Nuevo modo", self.new_mode), ("Renombrar", self.rename_mode),
+                           ("Eliminar modo", self.delete_mode)):
+            b = QPushButton(text)
+            b.clicked.connect(slot)
+            bar.addWidget(b)
+            if text != "Nuevo modo":
+                setattr(self, "btn_" + ("rename" if text == "Renombrar" else "delete"), b)
+        bar.addStretch()
+        lay.addLayout(bar)
+
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("Al iniciar el control:"))
+        self.start_combo = QComboBox()
+        self.start_combo.currentTextChanged.connect(self._start_changed)
+        bar.addWidget(self.start_combo)
+        self.info = QLabel()
+        self.info.setStyleSheet("color: gray;")
+        self.info.setWordWrap(True)
+        bar.addWidget(self.info, 1)
+        lay.addLayout(bar)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Tecla", "Salida", "Modificador", "Tipo", "Nota", "Origen"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         hdr = self.table.horizontalHeader()
-        for col in range(4):
+        for col in (0, 1, 2, 3, 5):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.table.doubleClicked.connect(self.edit)
@@ -322,17 +360,129 @@ class BindingsTab(QWidget):
             b = QPushButton(text)
             b.clicked.connect(slot)
             row.addWidget(b)
+            if text in ("Subir", "Bajar"):
+                setattr(self, "btn_up" if text == "Subir" else "btn_down", b)
+        self.btn_reset = QPushButton("Quitar todos los cambios del modo")
+        self.btn_reset.clicked.connect(self.reset_mode)
+        row.addWidget(self.btn_reset)
         row.addStretch()
         lay.addLayout(row)
 
-    def load(self, bindings):
-        self.bindings = bindings
+    # ---------- datos ----------
+    def load(self, cfg):
+        self.bindings = cfg["bindings"]
+        self.modes = cfg.get("modes") or []
+        self.mode_default = cfg["special"].get("mode_default", "")
+        self.start_mode = cfg.get("start_mode") or C.DEFAULT_MODE
+        self._fill_modes(0)
+
+    def store(self, cfg):
+        cfg["bindings"] = self.bindings
+        cfg["modes"] = self.modes
+        cfg["start_mode"] = self.start_mode
+        cfg["special"]["mode_default"] = self.mode_default
+
+    def mode(self):
+        """El modo seleccionado, o None si es "Por defecto"."""
+        i = self.mode_combo.currentIndex()
+        return self.modes[i - 1] if i > 0 else None
+
+    def _label(self, name, hotkey):
+        return name + (f"   (Alt+{C.input_label(hotkey)})" if hotkey else "")
+
+    def _fill_modes(self, select):
+        self._loading = True
+        self.mode_combo.clear()
+        self.mode_combo.addItem(self._label(C.DEFAULT_MODE, self.mode_default))
+        for m in self.modes:
+            self.mode_combo.addItem(self._label(m["name"], m.get("hotkey")))
+        self.start_combo.clear()
+        self.start_combo.addItems([C.DEFAULT_MODE] + [m["name"] for m in self.modes])
+        names = [C.DEFAULT_MODE] + [m["name"] for m in self.modes]
+        if self.start_mode not in names:
+            self.start_mode = C.DEFAULT_MODE
+        self.start_combo.setCurrentText(self.start_mode)
+        self.mode_combo.setCurrentIndex(max(0, min(select, len(self.modes))))
+        self._loading = False
+        self._mode_changed()
+
+    def _mode_changed(self, *_):
+        if self._loading:
+            return
+        m = self.mode()
+        self._loading = True
+        self.hotkey.set_value(m.get("hotkey", "") if m else self.mode_default)
+        self._loading = False
+        base = m is None
+        for b in (self.btn_rename, self.btn_delete, self.btn_reset):
+            b.setEnabled(not base)
+        self.btn_up.setEnabled(base)
+        self.btn_down.setEnabled(base)
+        self.info.setText(
+            "Lo que pongas aqui lo heredan todos los modos." if base else
+            f"El modo {m['name']} solo guarda lo que cambia (Origen = {m['name']}). "
+            "Lo demas viene de Por defecto; si lo editas, se copia a este modo.")
         self.refresh()
 
+    def _hotkey_changed(self):
+        if self._loading:
+            return
+        value = self.hotkey.value()
+        if value and not C.is_valid_input(value):
+            return
+        m = self.mode()
+        if m is None:
+            self.mode_default = value
+        else:
+            m["hotkey"] = value
+        i = self.mode_combo.currentIndex()
+        self._loading = True
+        self.mode_combo.setItemText(i, self._label(m["name"] if m else C.DEFAULT_MODE, value))
+        self._loading = False
+        self.changed.emit()
+
+    def _start_changed(self, text):
+        if self._loading or not text:
+            return
+        self.start_mode = text
+        self.changed.emit()
+
+    # ---------- tabla ----------
+    def _binding(self, row):
+        origin, i = self.rows[row]
+        return self.bindings[i] if origin == "base" else self.mode()["bindings"][i]
+
     def refresh(self, select=None):
-        self.table.setRowCount(len(self.bindings))
-        for r, b in enumerate(self.bindings):
-            if b.get("camera_only"):
+        m = self.mode()
+        if m is None:
+            self.rows = [("base", i) for i in range(len(self.bindings))]
+        else:
+            ov = m["bindings"]
+            by_key = {}
+            for j, b in enumerate(ov):
+                by_key.setdefault(C.binding_key(b), []).append(j)
+            shown = set()
+            self.rows = []
+            for i, b in enumerate(self.bindings):
+                k = C.binding_key(b)
+                if k in by_key:
+                    if k not in shown:
+                        self.rows += [("mode", j) for j in by_key[k]]
+                        shown.add(k)
+                else:
+                    self.rows.append(("base", i))
+            for k, js in by_key.items():
+                if k not in shown:
+                    self.rows += [("mode", j) for j in js]
+
+        gray = self.palette().color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
+        self.table.setRowCount(len(self.rows))
+        for r, (origin, _i) in enumerate(self.rows):
+            b = self._binding(r)
+            off = origin == "mode" and not b.get("outputs")
+            if off:
+                kind = "Desactivada en este modo"
+            elif b.get("camera_only"):
                 kind = "Solo mouse-camara"
             elif b.get("modifier"):
                 kind = "Combo"
@@ -343,65 +493,183 @@ class BindingsTab(QWidget):
                 kind = "Normal"
             cells = [
                 f"{C.input_label(b['input'])}   [{b['input']}]",
-                " + ".join(C.output_label(o) for o in b.get("outputs", [])),
-                " + ".join(C.output_label(o) for o in b.get("modifier", [])),
+                "—" if off else " + ".join(C.output_label(o) for o in b.get("outputs", [])),
+                "" if off else " + ".join(C.output_label(o) for o in b.get("modifier", [])),
                 kind,
                 b.get("note", ""),
+                "" if m is None else (m["name"] if origin == "mode" else C.DEFAULT_MODE),
             ]
             for c, text in enumerate(cells):
-                self.table.setItem(r, c, QTableWidgetItem(text))
-        if select is not None and 0 <= select < len(self.bindings):
+                item = QTableWidgetItem(text)
+                if m is not None:
+                    if origin == "base":
+                        item.setForeground(gray)
+                    else:
+                        f = item.font()
+                        f.setBold(True)
+                        item.setFont(f)
+                self.table.setItem(r, c, item)
+        if select is not None and 0 <= select < len(self.rows):
             self.table.selectRow(select)
+
+    def _select(self, origin, i):
+        for r, row in enumerate(self.rows):
+            if row == (origin, i):
+                self.table.selectRow(r)
+                return
 
     def current(self):
         rows = self.table.selectionModel().selectedRows()
         return rows[0].row() if rows else -1
 
+    # ---------- acciones ----------
     def add(self):
         dlg = BindingDialog(C.binding("", []), self)
         if dlg.exec():
-            self.bindings.append(dlg.binding())
-            self.refresh(len(self.bindings) - 1)
+            m = self.mode()
+            target = self.bindings if m is None else m["bindings"]
+            target.append(dlg.binding())
+            self.refresh()
+            self._select("base" if m is None else "mode", len(target) - 1)
             self.changed.emit()
 
     def edit(self, *_):
         r = self.current()
         if r < 0:
             return
-        dlg = BindingDialog(self.bindings[r], self)
-        if dlg.exec():
-            self.bindings[r] = dlg.binding()
+        origin, i = self.rows[r]
+        m = self.mode()
+        b = self._binding(r)
+        if origin == "mode" and not b.get("outputs"):
+            b = dict(b)
+            base = [x for x in self.bindings if C.binding_key(x) == C.binding_key(b)]
+            if base:
+                b = dict(base[0])
+        dlg = BindingDialog(b, self)
+        if not dlg.exec():
+            return
+        if m is None:
+            self.bindings[i] = dlg.binding()
             self.refresh(r)
-            self.changed.emit()
+        elif origin == "mode":
+            m["bindings"][i] = dlg.binding()
+            self.refresh(r)
+        else:                                    # de "Por defecto": se copia al modo
+            m["bindings"].append(dlg.binding())
+            self.refresh()
+            self._select("mode", len(m["bindings"]) - 1)
+        self.changed.emit()
 
     def duplicate(self):
         r = self.current()
         if r < 0:
             return
-        self.bindings.insert(r + 1, dict(self.bindings[r]))
-        self.refresh(r + 1)
+        origin, i = self.rows[r]
+        m = self.mode()
+        if m is None:
+            self.bindings.insert(i + 1, dict(self.bindings[i]))
+            self.refresh(r + 1)
+        else:
+            m["bindings"].append(dict(self._binding(r)))
+            self.refresh()
+            self._select("mode", len(m["bindings"]) - 1)
         self.changed.emit()
 
     def remove(self):
         r = self.current()
         if r < 0:
             return
-        b = self.bindings[r]
-        if QMessageBox.question(self, "Eliminar",
-                                f"¿Eliminar {C.input_label(b['input'])} -> "
-                                f"{' + '.join(b.get('outputs', []))}?") \
-                == QMessageBox.StandardButton.Yes:
-            del self.bindings[r]
-            self.refresh(min(r, len(self.bindings) - 1))
-            self.changed.emit()
+        origin, i = self.rows[r]
+        m = self.mode()
+        b = self._binding(r)
+        name = C.input_label(b["input"])
+        if m is None:
+            if QMessageBox.question(self, "Eliminar",
+                                    f"¿Eliminar {name} -> {' + '.join(b.get('outputs', []))}?\n"
+                                    "Se quita de todos los modos que no lo cambien.") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            del self.bindings[i]
+        elif origin == "mode":
+            del m["bindings"][i]                 # vuelve a lo de "Por defecto"
+        else:
+            if QMessageBox.question(self, "Desactivar",
+                                    f"¿Desactivar {name} solo en el modo {m['name']}?") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            off = dict(b)
+            off["outputs"], off["modifier"], off["radial"] = [], [], False
+            off["note"] = (b.get("note") or "") + " (desactivada)"
+            m["bindings"].append(off)
+        self.refresh(min(r, len(self.rows) - 1))
+        self.changed.emit()
 
     def move(self, delta):
+        if self.mode() is not None:
+            return
         r = self.current()
         n = r + delta
         if r < 0 or not (0 <= n < len(self.bindings)):
             return
         self.bindings[r], self.bindings[n] = self.bindings[n], self.bindings[r]
         self.refresh(n)
+        self.changed.emit()
+
+    def reset_mode(self):
+        m = self.mode()
+        if m is None or not m["bindings"]:
+            return
+        if QMessageBox.question(self, "Quitar cambios",
+                                f"¿Quitar los {len(m['bindings'])} cambios del modo {m['name']}?\n"
+                                "Queda igual que Por defecto.") == QMessageBox.StandardButton.Yes:
+            m["bindings"].clear()
+            self.refresh()
+            self.changed.emit()
+
+    # ---------- modos ----------
+    def _ask_name(self, title, current=""):
+        name, ok = QInputDialog.getText(self, title, "Nombre del modo:", text=current)
+        name = name.strip()
+        if not ok or not name:
+            return None
+        taken = [C.DEFAULT_MODE] + [m["name"] for m in self.modes if m["name"] != current]
+        if name in taken:
+            QMessageBox.warning(self, title, f"Ya hay un modo llamado '{name}'.")
+            return None
+        return name
+
+    def new_mode(self):
+        name = self._ask_name("Nuevo modo")
+        if not name:
+            return
+        self.modes.append({"name": name, "hotkey": "", "bindings": []})
+        self._fill_modes(len(self.modes))
+        self.changed.emit()
+
+    def rename_mode(self):
+        m = self.mode()
+        if m is None:
+            return
+        name = self._ask_name("Renombrar modo", m["name"])
+        if not name or name == m["name"]:
+            return
+        if self.start_mode == m["name"]:
+            self.start_mode = name
+        m["name"] = name
+        self._fill_modes(self.mode_combo.currentIndex())
+        self.changed.emit()
+
+    def delete_mode(self):
+        m = self.mode()
+        if m is None:
+            return
+        if QMessageBox.question(self, "Eliminar modo", f"¿Eliminar el modo {m['name']}?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        if self.start_mode == m["name"]:
+            self.start_mode = C.DEFAULT_MODE
+        self.modes.remove(m)
+        self._fill_modes(0)
         self.changed.emit()
 
 
@@ -436,6 +704,20 @@ class SticksTab(QWidget):
         form.addRow("Pausar / reanudar:", self.pause)
         form.addRow("Mouse como camara on/off:", self.mouselook)
         lay.addWidget(box)
+
+        box = QGroupBox("Modos (Alt + tecla)")
+        form = QFormLayout(box)
+        self.alt_blocks = QCheckBox("Con Alt presionado no mandar nada al juego "
+                                    "(Alt+Tab, Alt+O de scrcpy, cambios de modo)")
+        self.notify_mode = QCheckBox("Avisar con una notificacion al cambiar de modo")
+        self.alt_blocks.toggled.connect(self.changed.emit)
+        self.notify_mode.toggled.connect(self.changed.emit)
+        form.addRow(self.alt_blocks)
+        form.addRow(self.notify_mode)
+        hint = QLabel("Los modos y sus atajos se editan en la pestaña Botones.")
+        hint.setStyleSheet("color: gray;")
+        form.addRow(hint)
+        lay.addWidget(box)
         lay.addStretch()
 
     def load(self, cfg):
@@ -444,12 +726,16 @@ class SticksTab(QWidget):
                 f.set_value(name)
         self.pause.set_value(cfg["special"]["pause"])
         self.mouselook.set_value(cfg["special"]["mouselook"])
+        self.alt_blocks.setChecked(bool(cfg["special"].get("alt_blocks", True)))
+        self.notify_mode.setChecked(bool(cfg["special"].get("notify_mode", True)))
 
     def store(self, cfg):
         for key, fs in self.fields.items():
             cfg["sticks"][key] = [f.value() for f in fs]
         cfg["special"]["pause"] = self.pause.value()
         cfg["special"]["mouselook"] = self.mouselook.value()
+        cfg["special"]["alt_blocks"] = self.alt_blocks.isChecked()
+        cfg["special"]["notify_mode"] = self.notify_mode.isChecked()
 
 
 def _dspin(lo, hi, step, decimals=2, suffix=""):
@@ -833,7 +1119,9 @@ class MainWindow(QMainWindow):
         self.btn_save.clicked.connect(self.save)
         self.chk_debug = QCheckBox("Mostrar teclas en el log")
         self.chk_debug.toggled.connect(self.toggle_debug)
-        for w in (self.btn_engine, self.lbl_engine, self.btn_game, self.lbl_game, self.btn_all):
+        self.lbl_mode = QLabel()
+        for w in (self.btn_engine, self.lbl_engine, self.btn_game, self.lbl_game, self.btn_all,
+                  self.lbl_mode):
             bar.addWidget(w)
         bar.addStretch()
         bar.addWidget(self.chk_debug)
@@ -927,6 +1215,19 @@ class MainWindow(QMainWindow):
         self.geo_wid = None
         self.geo_misses = 0
 
+        icon = QIcon.fromTheme("input-gaming")
+        if icon.isNull():
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        self.setWindowIcon(icon)
+        self.tray = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = QSystemTrayIcon(icon, self)
+            self.tray.setToolTip(C.APP_NAME)
+            self.tray.activated.connect(lambda *_: (self.showNormal(), self.activateWindow()))
+            self.tray.show()
+        self.engine.stateChanged.connect(
+            lambda st: st == QProcess.ProcessState.NotRunning and self.lbl_mode.setText(""))
+
         self.load_into_ui()
         self.update_status()
         self.append_log(f"Config: {self.path}")
@@ -948,7 +1249,7 @@ class MainWindow(QMainWindow):
     # ---------- config <-> UI ----------
     def load_into_ui(self):
         self._loading = True
-        self.t_bind.load(self.cfg["bindings"])
+        self.t_bind.load(self.cfg)
         self.t_sticks.load(self.cfg)
         self.t_mouse.load(self.cfg)
         self.t_scrcpy.load(self.cfg)
@@ -959,7 +1260,7 @@ class MainWindow(QMainWindow):
         self.t_sticks.store(self.cfg)
         self.t_mouse.store(self.cfg)
         self.t_scrcpy.store(self.cfg)
-        self.cfg["bindings"] = self.t_bind.bindings
+        self.t_bind.store(self.cfg)
         return self.cfg
 
     def mark_dirty(self):
@@ -1003,10 +1304,13 @@ class MainWindow(QMainWindow):
 
     def restore_defaults(self):
         if QMessageBox.question(self, "Restaurar",
-                                "¿Volver al mapeo por defecto? (se aplica al guardar)") \
+                                "¿Volver a los botones, modos y teclas por defecto?\n"
+                                "La pestaña Juego (scrcpy) se queda como esta. Se aplica al guardar.") \
                 != QMessageBox.StandardButton.Yes:
             return
+        scrcpy = self.collect()["scrcpy"]
         self.cfg = C.default_config()
+        self.cfg["scrcpy"] = scrcpy
         self.load_into_ui()
         self.set_dirty(True)
 
@@ -1037,6 +1341,15 @@ class MainWindow(QMainWindow):
         for line in data.splitlines():
             if line.strip():
                 self.append_log(f"[{tag}] {line}")
+                if tag == "control" and line.startswith("Modo: "):
+                    self._mode_changed(line[6:].strip())
+
+    def _mode_changed(self, name):
+        self.lbl_mode.setText(f"   Modo: {name}")
+        self.lbl_mode.setStyleSheet("font-weight: bold;")
+        if self.tray and self.cfg["special"].get("notify_mode", True):
+            self.tray.showMessage(C.APP_NAME, f"Modo: {name}",
+                                  QSystemTrayIcon.MessageIcon.Information, 1500)
 
     def append_log(self, text):
         self.logbox.appendPlainText(text)

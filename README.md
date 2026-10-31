@@ -46,6 +46,8 @@ flowchart LR
 
 ## Características
 
+- **Modos por estilo de juego** (por ejemplo espada, ballesta, arco) que cambias en plena
+  partida con `Alt + tecla`. Cada modo solo guarda lo que cambia; lo demás lo comparten todos.
 - **Mapeo editable desde la app**: tabla de asignaciones con captura de teclas y botones del
   mouse (incluye los laterales de un mouse gamer).
 - **Combos con modificador**: una tecla manda `LT` y luego `B`, para menús tipo "LT + botón".
@@ -61,6 +63,8 @@ flowchart LR
   ventana sin bordes con el tamaño calculado para tu monitor. Si la ventana cambia al rotar, la
   regresa a su lugar.
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
+- Con **Alt presionado** no se manda nada al juego: `Alt+Tab` y los atajos de scrcpy (`Alt+O`)
+  no disparan botones.
 
 ## Capturas
 
@@ -69,13 +73,17 @@ flowchart LR
 | ![Botones](docs/img/linux-botones.png) | ![Botones en Windows](docs/img/windows-botones.png) |
 | ![Juego (scrcpy)](docs/img/linux-juego.png) | ![Juego en Windows](docs/img/windows-juego.png) |
 
+| Modo Ballesta (lo heredado sale en gris) | Combo con modificador (LT + X) |
+|---|---|
+| ![Modo Ballesta](docs/img/linux-modo-ballesta.png) | ![Combo](docs/img/dialogo-combo.png) |
+
 | Mouse y menú radial | Sticks y teclas especiales |
 |---|---|
 | ![Mouse y radial](docs/img/linux-mouse-radial.png) | ![Sticks](docs/img/linux-sticks.png) |
 
-| Asignación con menú radial (tocar / sostener) | Combo con modificador (LT + X) |
-|---|---|
-| ![Asignación radial](docs/img/dialogo-asignacion.png) | ![Combo](docs/img/dialogo-combo.png) |
+| Asignación con menú radial (tocar / sostener) |
+|---|
+| ![Asignación radial](docs/img/dialogo-asignacion.png) |
 
 ## Descargas
 
@@ -101,8 +109,9 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 ## Controles por defecto
 
-Todo se cambia desde la pestaña **Botones** de la app. Los nombres de las acciones son los de
-Monster Hunter Outlanders como ejemplo.
+Todo se cambia desde la pestaña **Botones** de la app. Las acciones son las de Monster Hunter
+Outlanders, como ejemplo. En los combos (`LT + B`), el primer botón entra primero y el segundo
+50 ms después, como cuando lo haces en un control.
 
 | Tecla / botón | Control | Ejemplo en el juego |
 |---|---|---|
@@ -111,32 +120,57 @@ Monster Hunter Outlanders como ejemplo.
 | `I J K L` | Stick derecho | Cámara con teclas |
 | Flechas | D-pad | |
 | `Espacio` | A | Saltar |
-| `R` / click izquierdo* | Y | Golpe normal |
+| Click izquierdo* | Y | Golpe normal |
 | `F` / click derecho | B | Golpe fuerte |
-| `C` | Y + B | Golpe fuerte + normal |
+| `C` | Y + B (juntos) | Golpe fuerte + normal |
+| `R` / lateral 2 / `O` | RT | Cubrirse |
 | `E` | X | Consumir objeto |
 | `Ctrl` | LB + menú radial con el mouse | Menú de objetos |
 | `Q` | RB al tocar / RB + menú radial al sostener | Mirar al frente, eslinga |
-| `V` | RB (sin radial) | Apuntar moviendo la cámara |
-| Lateral 1 del mouse | RB + A | Eslinga |
-| Lateral 2 del mouse / `O` | RT | Cubrirse |
+| Lateral 1 / click de rueda | RB + A | Eslinga |
 | `U` | LT | |
-| `1` `2` `3` `4` | LT + B / X / A / Y | Compañeros |
+| `1` `2` `3` | LT + Y / B / X | Compañeros |
+| `4` | LT + A | Especial |
+| `5` | RT + LT | Especial Felyne |
+| `G` | D-pad ↑ + LT | Fabricar |
+| `Tab` | D-pad → + RB | Cambiar objetivo |
+| `T` | B + RB | Preparar trampa |
 | `Shift` | L3 | Correr |
-| Click de rueda | R3 | |
 | `M` / `Esc` | Select / Start | |
 | `F12` | Pausar o reanudar kb2pad | Para escribir en otras apps |
 | `Bloq Mayús` | Mouse como cámara sí/no | |
 
-\* El click izquierdo solo cuenta como `Y` con el mouse en modo cámara. Fuera de ese modo,
+\* El click izquierdo solo cuenta como botón con el mouse en modo cámara. Fuera de ese modo,
 el mouse funciona normal en la ventana.
+
+## Modos
+
+Cada arma se juega distinto, así que en vez de cambiar teclas a cada rato hay **modos**.
+**Por defecto** es la tabla de arriba y la heredan todos; cada modo solo guarda las teclas que
+cambia. Si cambias algo en *Por defecto* (por ejemplo `G` = fabricar), aplica en todos los modos
+que no lo cambien.
+
+| Atajo | Modo | Qué cambia |
+|---|---|---|
+| `Alt + Q` | **Por defecto** | Nada: es la tabla de arriba (armas cuerpo a cuerpo). |
+| `Alt + 1` | **Espada** | Empieza igual que *Por defecto*, listo para que lo ajustes. |
+| `Alt + 2` | **Ballesta** | Click izq = RT (disparar) · Click der = Y (cubrirse) · `R` = LB + RB (recargar) · `V` = B (modo misil). `C` sigue siendo Y + B. |
+| `Alt + 3` | **Arco** | Click izq = RT (disparar) · Click der = Y · `R` = Y. `F` = B y `C` = Y + B siguen igual. |
+
+- Cambias de modo **en plena partida**, sin soltar lo que tienes presionado (sigues corriendo).
+- La app muestra el modo actual y avisa con una notificación al cambiar.
+- En la pestaña **Botones** eliges el modo arriba: lo que viene de *Por defecto* sale en gris, y
+  si lo editas se copia a ese modo. Puedes crear modos nuevos, ponerles su `Alt + tecla`,
+  desactivar una tecla solo en un modo y elegir con qué modo arranca el control.
+
+![Modo Ballesta en la pestaña Botones](docs/img/linux-modo-ballesta.png)
 
 ## Notas
 
 - **No modifica el juego** ni inyecta toques: solo hay un control conectado. Aun así, evita
   macros o automatizar acciones en juegos en línea.
 - kb2pad lee el teclado **de forma global** mientras está activo. Pausa con `F12` si vas a
-  escribir en otra ventana.
+  escribir en otra ventana (`Alt + Tab` no manda nada al juego).
 - **Xiaomi / POCO / Redmi**: para que el mouse funcione en los menús, activa
   *Depuración USB (Configuración de seguridad)* (viene en las guías).
 - **Windows**: el `.exe` no está firmado, así que SmartScreen puede advertir la primera vez.

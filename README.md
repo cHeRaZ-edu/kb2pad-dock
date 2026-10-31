@@ -49,6 +49,7 @@ flowchart LR
 - **Mapeo editable desde la app**: tabla de asignaciones con captura de teclas y botones del
   mouse (incluye los laterales de un mouse gamer).
 - **Combos con modificador**: una tecla manda `LT` y luego `B`, para menús tipo "LT + botón".
+  También con el D-pad (por ejemplo `LT + D-pad ↑`).
 - **Varias salidas en una tecla**: por ejemplo `C` = `Y + B`.
 - **Mouse como cámara** (stick derecho) que se activa y desactiva con Bloq Mayús.
 - **Menú radial con el mouse**: mientras sostienes la tecla, el mouse apunta y se queda en el

@@ -16,7 +16,12 @@ OUT_CODES = {
     "A": e.BTN_A, "B": e.BTN_B, "X": e.BTN_X, "Y": e.BTN_Y,
     "LB": e.BTN_TL, "RB": e.BTN_TR, "BACK": e.BTN_SELECT, "START": e.BTN_START,
     "L3": e.BTN_THUMBL, "R3": e.BTN_THUMBR, "LT": LT, "RT": RT,
+    "DPAD_UP": "DPAD_UP", "DPAD_DOWN": "DPAD_DOWN",
+    "DPAD_LEFT": "DPAD_LEFT", "DPAD_RIGHT": "DPAD_RIGHT",
 }
+# direccion del D-pad -> (eje del hat, valor)
+DPAD_OUT = {"DPAD_UP": (e.ABS_HAT0Y, -1), "DPAD_DOWN": (e.ABS_HAT0Y, 1),
+            "DPAD_LEFT": (e.ABS_HAT0X, -1), "DPAD_RIGHT": (e.ABS_HAT0X, 1)}
 STICK_MAX = 32767
 TICK = 1 / 250
 PAD_NAME = "Microsoft X-Box 360 pad (kb2pad)"
@@ -117,6 +122,9 @@ def press_outputs(st, outputs):
     for out in outputs:
         if out in TRIGGER_AXIS:
             st[(e.EV_ABS, TRIGGER_AXIS[out])] = 255
+        elif out in DPAD_OUT:
+            axis, value = DPAD_OUT[out]
+            st[(e.EV_ABS, axis)] = value
         else:
             st[(e.EV_KEY, out)] = 1
 

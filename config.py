@@ -25,12 +25,17 @@ else:
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 # ---------------------------------------------------------------- salidas
-OUTPUTS = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "BACK", "START", "L3", "R3"]
+OUTPUTS = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "BACK", "START", "L3", "R3",
+           "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT"]
 OUTPUT_LABELS = {
     "BACK": "Select",
     "START": "Start",
     "L3": "L3",
     "R3": "R3",
+    "DPAD_UP": "D-pad ↑",
+    "DPAD_DOWN": "D-pad ↓",
+    "DPAD_LEFT": "D-pad ←",
+    "DPAD_RIGHT": "D-pad →",
 }
 
 

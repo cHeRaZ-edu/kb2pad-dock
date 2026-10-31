@@ -116,14 +116,14 @@ puedes editar `~/.config/kb2pad/config.json` a mano: el control detecta el cambi
 **Forzar X11** en la pestaña Juego. Para que la app regrese la ventana a su lugar después de
 rotar, necesitas `xdotool`.
 
-**Avisos**: al conectar o pausar el control, al activar el mouse como cámara y al cambiar de
-modo sale una notificación del escritorio. No afecta al juego y se apagan en *Sticks y teclas
-especiales*.
+**Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta)
+o **Alt + 3** (Arco). El icono del modo actual (espada, ballesta o arco) se ve en la bandeja del
+sistema y en la barra de la app; sale en gris si el control está detenido o en pausa. Cada modo es
+una plantilla completa que editas en la pestaña **Botones** (elige el modo arriba); ahí también
+cambias su icono por una imagen tuya.
 
-**Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta),
-**Alt + 3** (Arco) o **Alt + Q** (Por defecto). La app muestra el modo actual y avisa con una
-notificación. Los modos se editan en la pestaña **Botones**: elige el modo arriba y cambia solo
-las teclas que quieras para esa arma.
+Si no ves el icono en la bandeja de KDE, abre la flecha de la bandeja → *Configurar la bandeja
+del sistema* → *Entradas* y pon **kb2pad-dock** en *Mostrar siempre*.
 
 La tabla de controles y de modos está en el [README](../README.md#controles-por-defecto).
 

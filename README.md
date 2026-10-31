@@ -46,8 +46,10 @@ flowchart LR
 
 ## Características
 
-- **Modos por estilo de juego** (por ejemplo espada, ballesta, arco) que cambias en plena
-  partida con `Alt + tecla`. Cada modo solo guarda lo que cambia; lo demás lo comparten todos.
+- **Modos por estilo de juego** (espada, ballesta, arco) que cambias en plena partida con
+  `Alt + tecla`. Cada modo es una plantilla completa que configuras como quieras.
+- **Icono del modo en la bandeja del sistema** (espada, ballesta o arco), así sabes en qué modo
+  estás sin avisos que tapen el juego. Los iconos se pueden cambiar por una imagen tuya.
 - **Mapeo editable desde la app**: tabla de asignaciones con captura de teclas y botones del
   mouse (incluye los laterales de un mouse gamer).
 - **Combos con modificador**: una tecla manda `LT` y luego `B`, para menús tipo "LT + botón".
@@ -65,8 +67,6 @@ flowchart LR
   ventana sin bordes con el tamaño calculado para tu monitor. Si la ventana cambia al rotar, la
   regresa a su lugar.
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
-- **Avisos** del escritorio al cambiar de modo, al activar el mouse como cámara y cuando el control
-  se conecta, se pausa o se desconecta. Se pueden apagar uno por uno.
 - Con **Alt presionado** no se manda nada al juego: `Alt+Tab` y los atajos de scrcpy (`Alt+O`)
   no disparan botones.
 
@@ -77,7 +77,7 @@ flowchart LR
 | ![Botones](docs/img/linux-botones.png) | ![Botones en Windows](docs/img/windows-botones.png) |
 | ![Juego (scrcpy)](docs/img/linux-juego.png) | ![Juego en Windows](docs/img/windows-juego.png) |
 
-| Modo Ballesta (lo heredado sale en gris) | Combo con modificador (LT + X) |
+| Modo Ballesta | Combo con modificador (LT + X) |
 |---|---|
 | ![Modo Ballesta](docs/img/linux-modo-ballesta.png) | ![Combo](docs/img/dialogo-combo.png) |
 
@@ -113,8 +113,9 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 ## Controles por defecto
 
-Todo se cambia desde la pestaña **Botones** de la app. Las acciones son las de Monster Hunter
-Outlanders, como ejemplo. En los combos (`LT + B`), el primer botón entra primero y el segundo
+Esta es la plantilla **Espada** tal como viene; las otras plantillas parten de ella (ver
+[Modos](#modos)). Todo se cambia desde la pestaña **Botones** de la app. Las acciones son las de
+Monster Hunter Outlanders, como ejemplo. En los combos (`LT + B`), el primer botón entra primero y el segundo
 50 ms después, como cuando lo haces en un control.
 
 | Tecla / botón | Control | Ejemplo en el juego |
@@ -150,24 +151,27 @@ rueda es un toque del D-pad.
 
 ## Modos
 
-Cada arma se juega distinto, así que en vez de cambiar teclas a cada rato hay **modos**.
-**Por defecto** es la tabla de arriba y la heredan todos; cada modo solo guarda las teclas que
-cambia. Si cambias algo en *Por defecto* (por ejemplo `G` = fabricar), aplica en todos los modos
-que no lo cambien.
+Cada arma se juega distinto, así que en vez de cambiar teclas a cada rato hay **modos**. Cada
+modo es una **plantilla completa**: puedes cambiar cualquier tecla en cualquiera. Vienen con estos
+valores por defecto (las teclas que no se usan en combate son iguales en las tres):
 
-| Atajo | Modo | Qué cambia |
-|---|---|---|
-| `Alt + Q` | **Por defecto** | Nada: es la tabla de arriba (armas cuerpo a cuerpo). |
-| `Alt + 1` | **Espada** | Empieza igual que *Por defecto*, listo para que lo ajustes. |
-| `Alt + 2` | **Ballesta** | Click izq = RT (disparar) · Click der = Y (cubrirse) · `R` = LB + RB (recargar) · `V` = B (modo misil). `C` sigue siendo Y + B. |
-| `Alt + 3` | **Arco** | Click izq = RT (disparar) · Click der = Y · `R` = Y. `F` = B y `C` = Y + B siguen igual. |
+| Atajo | Modo | Icono | Qué cambia respecto a la tabla de arriba |
+|---|---|---|---|
+| `Alt + 1` | **Espada** | ![](docs/img/icono-espada.png) | Nada: es la tabla de arriba (armas cuerpo a cuerpo). |
+| `Alt + 2` | **Ballesta** | ![](docs/img/icono-ballesta.png) | Click izq = RT (disparar) · Click der = Y (cubrirse) · `R` = LB + RB (recargar) · `V` = B (modo misil). `C` sigue siendo Y + B. |
+| `Alt + 3` | **Arco** | ![](docs/img/icono-arco.png) | Click izq = RT (disparar) · Click der = Y · `R` = Y. `F` = B y `C` = Y + B siguen igual. |
 
 - Cambias de modo **en plena partida**, sin soltar lo que tienes presionado (sigues corriendo).
-- La app muestra el modo actual y avisa con una notificación al cambiar. La notificación la
-  dibuja el escritorio encima de la ventana: no le quita el foco ni afecta al juego.
-- En la pestaña **Botones** eliges el modo arriba: lo que viene de *Por defecto* sale en gris, y
-  si lo editas se copia a ese modo. Puedes crear modos nuevos, ponerles su `Alt + tecla`,
-  desactivar una tecla solo en un modo y elegir con qué modo arranca el control.
+- El **icono del modo** se ve en la bandeja del sistema y en la barra de la app. Sale en gris
+  cuando el control está detenido o en pausa.
+- En la pestaña **Botones** eliges el modo arriba y editas su tabla. Ahí mismo:
+  - **Icono**: cambia el dibujo (mando, espada, ballesta, arco, letra) o usa una imagen tuya
+    (PNG, SVG o ICO).
+  - **Nuevo modo** crea uno copiando el modo actual; le pones su `Alt + tecla`.
+  - **Copiar a todos los modos** pone la tecla seleccionada igual en los demás (por ejemplo, si
+    cambias `G` = fabricar).
+  - **Restaurar plantilla** regresa Espada, Ballesta o Arco a sus teclas de fábrica.
+  - **Al iniciar el control** elige con qué modo arranca.
 
 ![Modo Ballesta en la pestaña Botones](docs/img/linux-modo-ballesta.png)
 

@@ -8,6 +8,7 @@ Las salidas del control son: A B X Y LB RB LT RT BACK START L3 R3
 import copy
 import json
 import os
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -128,9 +129,10 @@ def binding(inp, outs, note="", modifier=None, radial=False, hold=0.0, camera_on
     }
 
 
-DEFAULT_MODE = "Por defecto"     # nombre del modo base (sin cambios)
+DEFAULT_MODE = "Por defecto"     # solo para leer configs viejas (antes era la capa base)
 
-DEFAULT_BINDINGS = [
+# Teclas que se usan igual con cualquier arma (las que no cambian en combate)
+COMMON_BINDINGS = [
     binding("KEY_SPACE", ["A"], "Saltar"),
     binding("KEY_Q", ["RB"], "Mirar al frente / eslinga; sostener = menu radial",
             radial=True, hold=0.20),
@@ -159,33 +161,87 @@ DEFAULT_BINDINGS = [
     binding("KEY_M", ["BACK"], "Select"),
     binding("KEY_ESC", ["START"], "Start / menu"),
 ]
+DEFAULT_BINDINGS = COMMON_BINDINGS       # nombre viejo
 
-# Cada modo solo guarda las teclas que cambia; lo demas lo hereda de "Por defecto".
-DEFAULT_MODES = [
-    {"name": "Espada", "hotkey": "KEY_1", "bindings": []},
-    {"name": "Ballesta", "hotkey": "KEY_2", "bindings": [
+# Lo que cada plantilla cambia respecto a las teclas comunes (solo para armar los valores
+# por defecto: despues cada modo es una plantilla completa y se edita como quieras).
+_TEMPLATE_CHANGES = {
+    "Espada": [],
+    "Ballesta": [
         binding("BTN_LEFT", ["RT"], "Disparar (click izq)", camera_only=True),
         binding("BTN_RIGHT", ["Y"], "Cubrirse (click der)"),
         binding("KEY_R", ["RB"], "Recargar (LB + RB)", modifier=["LB"]),
         binding("KEY_V", ["B"], "Modo misil"),
-    ]},
-    {"name": "Arco", "hotkey": "KEY_3", "bindings": [
+    ],
+    "Arco": [
         binding("BTN_LEFT", ["RT"], "Disparar (click izq)", camera_only=True),
         binding("BTN_RIGHT", ["Y"], "Y (click der)"),
         binding("KEY_R", ["Y"], "Y"),
-    ]},
-]
+    ],
+}
+_TEMPLATE_INFO = {"Espada": ("KEY_1", "sword"), "Ballesta": ("KEY_2", "crossbow"),
+                  "Arco": ("KEY_3", "bow")}
+
+ICON_KINDS = ["gamepad", "sword", "crossbow", "bow", "letter"]
+
+
+def binding_key(b):
+    """Identidad de una asignacion: tecla + 'solo mouse-camara'."""
+    return (b.get("input", ""), bool(b.get("camera_only")))
+
+
+def _apply_changes(base, changes):
+    """Copia de 'base' con 'changes' encima: reemplaza en su lugar la misma tecla y agrega las nuevas.
+    Un cambio sin salidas quita esa tecla."""
+    by_key = {}
+    for c in changes:
+        by_key.setdefault(binding_key(c), []).append(c)
+    out, used = [], set()
+    for b in base:
+        k = binding_key(b)
+        if k in by_key:
+            if k not in used:
+                out += [copy.deepcopy(c) for c in by_key[k] if c.get("outputs")]
+                used.add(k)
+        else:
+            out.append(copy.deepcopy(b))
+    for k, cs in by_key.items():
+        if k not in used:
+            out += [copy.deepcopy(c) for c in cs if c.get("outputs")]
+    return out
+
+
+def template_names():
+    return list(_TEMPLATE_CHANGES)
+
+
+def default_mode(name):
+    """La plantilla de fabrica con ese nombre (Espada, Ballesta, Arco), o None."""
+    if name not in _TEMPLATE_CHANGES:
+        return None
+    hotkey, icon = _TEMPLATE_INFO[name]
+    return {"name": name, "hotkey": hotkey, "icon": icon, "icon_file": "",
+            "bindings": _apply_changes(COMMON_BINDINGS, _TEMPLATE_CHANGES[name])}
+
+
+def guess_icon(name):
+    """Icono por defecto para un modo nuevo, segun su nombre (palabras completas)."""
+    words = set(re.findall(r"[a-záéíóúñ]+", (name or "").lower()))
+    if words & {"ballesta", "ballestas", "artillero", "artilleria", "artillería"}:
+        return "crossbow"
+    if words & {"arco", "arquero"}:
+        return "bow"
+    if words & {"espada", "mandoble", "cuerpo", "katana", "espadas"}:
+        return "sword"
+    return "letter"
+
 
 DEFAULT_CONFIG = {
-    "version": 2,
+    "version": 3,
     "special": {
         "pause": "KEY_F12",
         "mouselook": "KEY_CAPSLOCK",
-        "mode_default": "KEY_Q",     # Alt + esta tecla = volver a "Por defecto"
         "alt_blocks": True,          # con Alt presionado no se manda nada al juego
-        "notify_mode": True,         # avisos (los muestra la GUI): cambio de modo,
-        "notify_mouse": True,        #   mouse como camara sí/no,
-        "notify_control": True,      #   control conectado / en pausa / desconectado
         "hide_cursor": True,         # ocultar el cursor con el mouse como camara
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
@@ -193,9 +249,9 @@ DEFAULT_CONFIG = {
         "camera": ["KEY_I", "KEY_K", "KEY_J", "KEY_L"],
         "dpad": ["KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT"],
     },
-    "bindings": DEFAULT_BINDINGS,
-    "modes": DEFAULT_MODES,
-    "start_mode": DEFAULT_MODE,
+    # Cada modo es una plantilla completa: Alt + hotkey lo activa.
+    "modes": [default_mode(n) for n in template_names()],
+    "start_mode": "Espada",
     "combo_delay": 0.05,
     "mouse": {
         "full_speed": 1500.0,
@@ -240,11 +296,6 @@ def default_config():
 MODE_MODIFIERS = ("KEY_LEFTALT", "KEY_RIGHTALT")   # el atajo de modo es Alt + tecla
 
 
-def binding_key(b):
-    """Identidad de una asignacion para que un modo la reemplace: tecla + 'solo mouse-camara'."""
-    return (b.get("input", ""), bool(b.get("camera_only")))
-
-
 def find_mode(cfg, name):
     for m in cfg.get("modes") or []:
         if m.get("name") == name:
@@ -253,43 +304,70 @@ def find_mode(cfg, name):
 
 
 def mode_names(cfg):
-    return [DEFAULT_MODE] + [m.get("name", "") for m in cfg.get("modes") or []]
+    return [m.get("name", "") for m in cfg.get("modes") or []]
 
 
-def effective_bindings(cfg, mode_name=DEFAULT_MODE):
-    """Asignaciones que valen en un modo: las de "Por defecto" con los cambios del modo encima.
-    Un cambio sin salidas desactiva esa tecla en el modo."""
-    base = list(cfg.get("bindings") or [])
-    mode = find_mode(cfg, mode_name) if mode_name != DEFAULT_MODE else None
-    if not mode:
-        return base
-    overrides = list(mode.get("bindings") or [])
-    replaced = {binding_key(b) for b in overrides}
-    out = [b for b in base if binding_key(b) not in replaced]
-    out += [b for b in overrides if b.get("outputs")]
-    return out
+def effective_bindings(cfg, mode_name):
+    """Las asignaciones de un modo (cada modo es una plantilla completa)."""
+    m = find_mode(cfg, mode_name)
+    return list(m.get("bindings") or []) if m else []
 
 
 # ---------------------------------------------------------------- carga / guardado
+def _migrate(out):
+    """Configs viejas -> plantillas (v3).
+    v1: una sola tabla 'bindings'.  v2: 'bindings' como base + modos con solo sus cambios."""
+    base = _norm_bindings(out.get("bindings")) if "bindings" in out else None
+    old_modes = [m for m in out.get("modes") or [] if isinstance(m, dict) and m.get("name")]
+    if base is None:
+        return
+    if int(out.get("version") or 1) >= 2 and old_modes:
+        new = []
+        for m in old_modes:
+            changes = _norm_bindings(m.get("bindings"))
+            new.append({"name": m["name"], "hotkey": m.get("hotkey") or "",
+                        "icon": m.get("icon") or guess_icon(m["name"]), "icon_file": "",
+                        "bindings": _apply_changes(base, changes)})
+        out["modes"] = new
+    else:
+        new = []
+        for name in template_names():
+            hotkey, icon = _TEMPLATE_INFO[name]
+            new.append({"name": name, "hotkey": hotkey, "icon": icon, "icon_file": "",
+                        "bindings": _apply_changes(base, _TEMPLATE_CHANGES[name])})
+        out["modes"] = new
+    if out.get("start_mode") == DEFAULT_MODE or not out.get("start_mode"):
+        out["start_mode"] = out["modes"][0]["name"] if out["modes"] else "Espada"
+    out.pop("bindings", None)
+    sp = out.get("special") or {}
+    for k in ("mode_default", "notify_mode", "notify_mouse", "notify_control"):
+        sp.pop(k, None)
+
+
 def normalize(data):
     """Rellena lo que falte con los defaults (por si el archivo es viejo o se edito a mano)."""
-    base = default_config()
     out = copy.deepcopy(data) if isinstance(data, dict) else {}
+    _migrate(out)
+    base = default_config()
     for key, val in base.items():
         if key not in out:
             out[key] = copy.deepcopy(val)
         elif isinstance(val, dict) and isinstance(out[key], dict):
             for sk, sv in val.items():
                 out[key].setdefault(sk, copy.deepcopy(sv))
-    out["bindings"] = _norm_bindings(out.get("bindings"))
     modes = []
     for m in out.get("modes") or []:
         if isinstance(m, dict) and m.get("name"):
+            icon = m.get("icon") if m.get("icon") in ICON_KINDS else guess_icon(m["name"])
             modes.append({"name": str(m["name"]), "hotkey": m.get("hotkey") or "",
+                          "icon": icon, "icon_file": m.get("icon_file") or "",
                           "bindings": _norm_bindings(m.get("bindings"))})
+    if not modes:
+        modes = copy.deepcopy(base["modes"])
     out["modes"] = modes
+    out["version"] = 3
     if out.get("start_mode") not in mode_names(out):
-        out["start_mode"] = DEFAULT_MODE
+        out["start_mode"] = modes[0]["name"]
     return out
 
 
@@ -351,35 +429,21 @@ def validate(cfg):
         if check(n, f"Tecla especial {label}"):
             use(n, f"especial {label}")
 
-    hotkeys = {}
-    n = cfg["special"].get("mode_default", "")
-    if n and check(n, "Atajo de 'Por defecto'"):
-        hotkeys[n] = DEFAULT_MODE
-    names = set()
+    hotkeys, names = {}, set()
+    if not cfg.get("modes"):
+        errors.append("Tiene que haber al menos un modo")
     for m in cfg.get("modes") or []:
         name = m.get("name", "").strip()
-        if not name or name == DEFAULT_MODE:
-            errors.append(f"Modo sin nombre o con el nombre reservado '{DEFAULT_MODE}'")
+        if not name:
+            errors.append("Hay un modo sin nombre")
         elif name in names:
             errors.append(f"Hay dos modos llamados '{name}'")
         names.add(name)
         hk = m.get("hotkey", "")
-        if hk:
-            if check(hk, f"Atajo del modo {name}"):
-                if hk in hotkeys:
-                    errors.append(f"Alt + {input_label(hk)} es el atajo de '{hotkeys[hk]}' y de '{name}'")
-                hotkeys[hk] = name
-        seen = {}
-        for b in m.get("bindings") or []:
-            where = f"Modo {name}: {b.get('note') or b.get('input')}"
-            check(b.get("input", ""), where)
-            for o in list(b.get("outputs", [])) + list(b.get("modifier", [])):
-                if o not in OUTPUTS:
-                    errors.append(f"{where}: salida desconocida '{o}'")
-            k = binding_key(b)
-            if k in seen:
-                warnings.append(f"Modo {name}: '{input_label(k[0])}' esta dos veces")
-            seen[k] = True
+        if hk and check(hk, f"Atajo del modo {name}"):
+            if hk in hotkeys:
+                errors.append(f"Alt + {input_label(hk)} es el atajo de '{hotkeys[hk]}' y de '{name}'")
+            hotkeys[hk] = name
 
     dirs = ("arriba", "abajo", "izquierda", "derecha")
     for sk, label in (("move", "Movimiento"), ("camera", "Camara"), ("dpad", "D-pad")):
@@ -391,25 +455,32 @@ def validate(cfg):
             if check(n, f"{label} {d}"):
                 use(n, f"{label} {d}")
 
-    for i, b in enumerate(cfg["bindings"], 1):
-        where = f"Asignacion {i} ({b.get('note') or b.get('input')})"
-        inp = b.get("input", "")
-        if check(inp, where):
-            use(inp + ("#cam" if b.get("camera_only") else ""), where)
-        if not b.get("outputs"):
-            errors.append(f"{where}: no tiene salida")
-        for o in list(b.get("outputs", [])) + list(b.get("modifier", [])):
-            if o not in OUTPUTS:
-                errors.append(f"{where}: salida desconocida '{o}'")
-        if b.get("modifier") and b.get("radial"):
-            warnings.append(f"{where}: un combo no puede ser radial; se ignora el radial")
-        if b.get("camera_only") and (b.get("modifier") or b.get("radial")):
-            warnings.append(f"{where}: 'solo mouse-camara' ignora combo y radial")
-        try:
-            if float(b.get("radial_hold", 0)) < 0:
-                errors.append(f"{where}: espera del radial negativa")
-        except (TypeError, ValueError):
-            errors.append(f"{where}: espera del radial no es un numero")
+    for m in cfg.get("modes") or []:
+        mname = m.get("name")
+        mused = {k: list(v) for k, v in used.items()}       # especiales y sticks valen en todos
+        for i, b in enumerate(m.get("bindings") or [], 1):
+            where = f"{mname}: asignacion {i} ({b.get('note') or b.get('input')})"
+            inp = b.get("input", "")
+            if check(inp, where):
+                mused.setdefault(inp + ("#cam" if b.get("camera_only") else ""), []).append(where)
+            if not b.get("outputs"):
+                errors.append(f"{where}: no tiene salida")
+            for o in list(b.get("outputs", [])) + list(b.get("modifier", [])):
+                if o not in OUTPUTS:
+                    errors.append(f"{where}: salida desconocida '{o}'")
+            if b.get("modifier") and b.get("radial"):
+                warnings.append(f"{where}: un combo no puede ser radial; se ignora el radial")
+            if b.get("camera_only") and (b.get("modifier") or b.get("radial")):
+                warnings.append(f"{where}: 'solo mouse-camara' ignora combo y radial")
+            try:
+                if float(b.get("radial_hold", 0)) < 0:
+                    errors.append(f"{where}: espera del radial negativa")
+            except (TypeError, ValueError):
+                errors.append(f"{where}: espera del radial no es un numero")
+        for key, wheres in mused.items():
+            if len(wheres) > 1 and any(w.startswith(f"{mname}:") for w in wheres):
+                warnings.append(f"'{input_label(key.split('#')[0])}' se usa en varios lugares: "
+                                + "; ".join(wheres))
 
     for key, wheres in used.items():
         if len(wheres) > 1:

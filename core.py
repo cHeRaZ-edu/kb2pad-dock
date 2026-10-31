@@ -65,14 +65,13 @@ class EngineConfig:
         self.alt_keys = {k(n) for n in C.MODE_MODIFIERS}
         self.alt_blocks = bool(sp.get("alt_blocks", True))
         self.mode_hotkeys = {}       # tecla -> nombre del modo
-        if sp.get("mode_default"):
-            self.mode_hotkeys[k(sp["mode_default"])] = C.DEFAULT_MODE
         for m in raw.get("modes") or []:
             if m.get("hotkey"):
                 self.mode_hotkeys[k(m["hotkey"])] = m["name"]
         self.mode_maps = {name: self._build(C.effective_bindings(raw, name))
                           for name in C.mode_names(raw)}
-        self.start_mode = raw.get("start_mode") or C.DEFAULT_MODE
+        names = C.mode_names(raw)
+        self.start_mode = raw.get("start_mode") if raw.get("start_mode") in names else names[0]
 
         st = raw["sticks"]
         self.move_keys = tuple(k(n) for n in st["move"])
@@ -116,7 +115,7 @@ class EngineConfig:
 
     def set_mode(self, name):
         if name not in self.mode_maps:
-            name = C.DEFAULT_MODE
+            name = self.start_mode
         self.mode = name
         self.buttons, self.mouselook_buttons, self.combos, self.radial_keys = self.mode_maps[name]
 
@@ -542,14 +541,8 @@ class Mapper:
 
 # ================================================================ resumen
 def summary(cfg_raw):
-    n = len(cfg_raw["bindings"])
-    radial = [C.input_label(b["input"]) for b in cfg_raw["bindings"]
-              if b.get("radial") and not b.get("modifier") and not b.get("camera_only")]
-    text = f"{n} asignaciones" + (f", radial en: {', '.join(radial)}" if radial else "")
-    sp = cfg_raw["special"]
-    modes = [f"{C.DEFAULT_MODE} (Alt+{C.input_label(sp['mode_default'])})"] if sp.get("mode_default") else []
-    modes += [m["name"] + (f" (Alt+{C.input_label(m['hotkey'])})" if m.get("hotkey") else "")
-              for m in cfg_raw.get("modes") or []]
-    return text + (f"; modos: {', '.join(modes)}" if modes else "")
-
-
+    parts = []
+    for m in cfg_raw.get("modes") or []:
+        hk = f" (Alt+{C.input_label(m['hotkey'])})" if m.get("hotkey") else ""
+        parts.append(f"{m['name']}{hk}: {len(m.get('bindings') or [])} asignaciones")
+    return "; ".join(parts)

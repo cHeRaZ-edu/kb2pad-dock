@@ -81,14 +81,14 @@ Cualquier cambio que guardes se aplica al momento, aunque el control esté corri
 4. **F12** pausa kb2pad. Úsalo cuando vayas a escribir en otra ventana, porque kb2pad lee el
    teclado aunque la ventana del juego no tenga el foco. `Alt + Tab` no manda nada al juego.
 
-**Avisos**: al conectar o pausar el control, al activar el mouse como cámara y al cambiar de
-modo sale una notificación del escritorio. No afecta al juego y se apagan en *Sticks y teclas
-especiales*.
+**Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta)
+o **Alt + 3** (Arco). El icono del modo actual (espada, ballesta o arco) se ve en la bandeja del
+sistema y en la barra de la app; sale en gris si el control está detenido o en pausa. Cada modo es
+una plantilla completa que editas en la pestaña **Botones** (elige el modo arriba); ahí también
+cambias su icono por una imagen tuya.
 
-**Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta),
-**Alt + 3** (Arco) o **Alt + Q** (Por defecto). La app muestra el modo actual y avisa con una
-notificación. Los modos se editan en la pestaña **Botones**: elige el modo arriba y cambia solo
-las teclas que quieras para esa arma.
+Si no ves el icono junto al reloj, abre la flecha **^** de la barra de tareas y arrastra el
+icono de kb2pad-dock a la barra para dejarlo siempre visible.
 
 La tabla de controles y de modos está en el [README](../README.md#controles-por-defecto).
 

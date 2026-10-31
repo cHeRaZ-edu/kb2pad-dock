@@ -266,6 +266,7 @@ class Hooks(threading.Thread):
         self.anchor = (0, 0)
         self.kdown = set()
         self.passed_down = set()          # botones cuyo "down" paso a Windows
+        self.wheel_acc = {WM_MOUSEWHEEL: 0, WM_MOUSEHWHEEL: 0}   # acumula ruedas de alta resolucion
         self.tid = None
         self.ready = threading.Event()
         self.error = None
@@ -308,6 +309,14 @@ class Hooks(threading.Thread):
                                 self.q.put(("rel_ll", dx, dy, time.monotonic()))
                     elif wparam in (WM_MOUSEWHEEL, WM_MOUSEHWHEEL):
                         block = grabbed
+                        delta = c_short((m.mouseData >> 16) & 0xFFFF).value   # 120 por muesca
+                        acc = self.wheel_acc[wparam] + delta
+                        notches = int(acc / 120)
+                        self.wheel_acc[wparam] = acc - notches * 120
+                        if notches:
+                            # vertical: positivo = arriba.  horizontal: positivo = derecha
+                            axis = e.REL_WHEEL if wparam == WM_MOUSEWHEEL else e.REL_HWHEEL
+                            self.q.put(("wheel", axis, notches))
                     else:
                         if wparam in (WM_XBUTTONDOWN, WM_XBUTTONUP):
                             which = (m.mouseData >> 16) & 0xFFFF
@@ -607,6 +616,8 @@ def main(argv=None):
                 kind = item[0]
                 if kind == "key":
                     mapper.handle(keyboard if item[1] < e.BTN_MISC else mouse, ev(e.EV_KEY, item[1], item[2]))
+                elif kind == "wheel":
+                    mapper.handle(mouse, ev(e.EV_REL, item[1], item[2]))
                 elif kind == "rel_raw":
                     if rel.mode != "ll":
                         rel.mode, rel.pending, rel.pending_t = "raw", [0, 0], None

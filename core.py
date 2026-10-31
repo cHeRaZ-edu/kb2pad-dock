@@ -7,6 +7,7 @@ Cada sistema pone su propio ui (uinput en Linux, ViGEm en Windows).
 """
 import math
 import time
+import types
 
 import config as C
 from keycodes import e
@@ -28,6 +29,8 @@ PAD_NAME = "Microsoft X-Box 360 pad (kb2pad)"
 PAD_BUTTONS = (e.BTN_A, e.BTN_B, e.BTN_X, e.BTN_Y, e.BTN_TL, e.BTN_TR,
                e.BTN_SELECT, e.BTN_START, e.BTN_MODE, e.BTN_THUMBL, e.BTN_THUMBR)
 TRIGGER_AXIS = {LT: e.ABS_Z, RT: e.ABS_RZ}
+WHEEL_GAP = 0.04          # pausa entre toques cuando giras varias muescas seguidas
+WHEEL_MAX_QUEUE = 4
 
 
 
@@ -126,6 +129,8 @@ def load_engine_config(path):
 
 # ================================================================ helpers
 def code_name(code):
+    if code in C.WHEEL_BY_CODE:
+        return C.WHEEL_BY_CODE[code]
     name = e.bytype[e.EV_KEY].get(code, str(code))
     return name if isinstance(name, str) else "/".join(name)
 
@@ -175,6 +180,7 @@ class Mapper:
         self.combo_t = {}
         self.combo_fired = set()
         self.consumed = set()         # teclas usadas con Alt: su "soltar" se ignora
+        self.wheel = {}               # codigo de rueda -> {"down", "until", "left"}
         self.last = {}
         self.last_tick = time.monotonic()
         self.push()
@@ -256,6 +262,7 @@ class Mapper:
     def release_all(self):
         self.pressed.clear()
         self.consumed.clear()
+        self.wheel.clear()
         self.combo_t.clear()
         self.combo_fired.clear()
         self.radial_key = None
@@ -346,6 +353,14 @@ class Mapper:
         if ev.type == e.EV_REL:
             if not self.enabled:
                 return
+            if ev.code in (e.REL_WHEEL, e.REL_HWHEEL):
+                if ev.value:
+                    if ev.code == e.REL_WHEEL:
+                        name = "WHEEL_UP" if ev.value > 0 else "WHEEL_DOWN"
+                    else:
+                        name = "WHEEL_RIGHT" if ev.value > 0 else "WHEEL_LEFT"
+                    self.wheel_notch(C.WHEEL_CODES[name], abs(ev.value))
+                return
             if self.radial_key is not None:
                 if ev.code == e.REL_X:
                     self.radial_move(ev.value, 0)
@@ -417,6 +432,42 @@ class Mapper:
             self.combo_fired.discard(ev.code)
         self.push()
 
+    # ---------- rueda ----------
+    def _wheel_key(self, code, value):
+        self.handle(types.SimpleNamespace(name="rueda"),
+                    types.SimpleNamespace(type=e.EV_KEY, code=code, value=value))
+
+    def _wheel_tap(self):
+        return max(0.06, self.cfg.combo_delay + 0.05)
+
+    def wheel_notch(self, code, n=1):
+        """Cada muesca de la rueda es un toque corto de su asignacion (las demas se encolan)."""
+        st = self.wheel.get(code)
+        if st is None:
+            self.wheel[code] = {"down": True, "until": time.monotonic() + self._wheel_tap(),
+                                "left": min(n - 1, WHEEL_MAX_QUEUE)}
+            self._wheel_key(code, 1)
+        else:
+            st["left"] = min(st["left"] + n, WHEEL_MAX_QUEUE)
+
+    def _wheel_service(self, now, waits):
+        for code, st in list(self.wheel.items()):
+            if now < st["until"]:
+                waits.append(st["until"] - now)
+                continue
+            if st["down"]:
+                self._wheel_key(code, 0)
+                if st["left"] > 0:
+                    st["down"], st["until"] = False, now + WHEEL_GAP
+                    waits.append(WHEEL_GAP)
+                else:
+                    del self.wheel[code]
+            else:
+                st["left"] -= 1
+                st["down"], st["until"] = True, now + self._wheel_tap()
+                waits.append(self._wheel_tap())
+                self._wheel_key(code, 1)
+
     # ---------- tiempo ----------
     def mouse_tick(self, now):
         cfg = self.cfg
@@ -470,6 +521,9 @@ class Mapper:
 
         if self.mouselook and self.radial_key is None and not self.radial_release:
             waits.append(self.mouse_tick(now))
+
+        if self.wheel:
+            self._wheel_service(now, waits)
 
         for code, t0 in self.combo_t.items():
             if code in self.combo_fired:

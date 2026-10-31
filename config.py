@@ -46,11 +46,16 @@ def output_label(name):
 # ---------------------------------------------------------------- entradas
 MOUSE_BUTTONS = ["BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_SIDE", "BTN_EXTRA",
                  "BTN_FORWARD", "BTN_BACK", "BTN_TASK"]
+# La rueda del mouse como "teclas": cada muesca es un toque corto.
+WHEEL_CODES = {"WHEEL_UP": 0x1000, "WHEEL_DOWN": 0x1001, "WHEEL_LEFT": 0x1002, "WHEEL_RIGHT": 0x1003}
+WHEEL_BY_CODE = {v: k for k, v in WHEEL_CODES.items()}
 
 FRIENDLY = {
     "BTN_LEFT": "Click izq", "BTN_RIGHT": "Click der", "BTN_MIDDLE": "Click rueda",
     "BTN_SIDE": "Lateral 1", "BTN_EXTRA": "Lateral 2", "BTN_FORWARD": "Mouse adelante",
     "BTN_BACK": "Mouse atras", "BTN_TASK": "Mouse extra",
+    "WHEEL_UP": "Rueda arriba", "WHEEL_DOWN": "Rueda abajo",
+    "WHEEL_LEFT": "Rueda izq", "WHEEL_RIGHT": "Rueda der",
     "KEY_LEFTCTRL": "Ctrl izq", "KEY_RIGHTCTRL": "Ctrl der",
     "KEY_LEFTSHIFT": "Shift izq", "KEY_RIGHTSHIFT": "Shift der",
     "KEY_LEFTALT": "Alt izq", "KEY_RIGHTALT": "Alt der",
@@ -74,7 +79,7 @@ def _key_names():
     return sorted(names)
 
 
-INPUT_NAMES = _key_names() + MOUSE_BUTTONS
+INPUT_NAMES = _key_names() + MOUSE_BUTTONS + list(WHEEL_CODES)
 _INPUT_SET = set(INPUT_NAMES)
 
 
@@ -85,6 +90,8 @@ def is_valid_input(name):
 def input_code(name):
     if not is_valid_input(name):
         raise ValueError(f"tecla desconocida: {name}")
+    if name in WHEEL_CODES:
+        return WHEEL_CODES[name]
     return e.ecodes[name]
 
 
@@ -146,7 +153,8 @@ DEFAULT_BINDINGS = [
     binding("KEY_4", ["A"], "Especial (LT+A)", modifier=["LT"]),
     binding("KEY_5", ["LT"], "Especial Felyne (LT+RT)", modifier=["RT"]),
     binding("KEY_G", ["LT"], "Fabricar", modifier=["DPAD_UP"]),
-    binding("KEY_TAB", ["RB"], "Cambiar objetivo", modifier=["DPAD_RIGHT"]),
+    binding("WHEEL_UP", ["DPAD_LEFT"], "D-pad izq (rueda arriba)", camera_only=True),
+    binding("WHEEL_DOWN", ["DPAD_RIGHT"], "D-pad der (rueda abajo)", camera_only=True),
     binding("KEY_T", ["RB"], "Preparar trampa", modifier=["B"]),
     binding("KEY_M", ["BACK"], "Select"),
     binding("KEY_ESC", ["START"], "Start / menu"),
@@ -175,7 +183,10 @@ DEFAULT_CONFIG = {
         "mouselook": "KEY_CAPSLOCK",
         "mode_default": "KEY_Q",     # Alt + esta tecla = volver a "Por defecto"
         "alt_blocks": True,          # con Alt presionado no se manda nada al juego
-        "notify_mode": True,         # notificacion al cambiar de modo (la muestra la GUI)
+        "notify_mode": True,         # avisos (los muestra la GUI): cambio de modo,
+        "notify_mouse": True,        #   mouse como camara sí/no,
+        "notify_control": True,      #   control conectado / en pausa / desconectado
+        "hide_cursor": True,         # ocultar el cursor con el mouse como camara
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
         "move": ["KEY_W", "KEY_S", "KEY_A", "KEY_D"],

@@ -75,10 +75,15 @@ Cualquier cambio que guardes se aplica al momento, aunque el control esté corri
    - y abre la ventana sin bordes del juego.
 2. En el juego, revisa que aparezcan los íconos de botones de control (A, B, LT…). Eso confirma
    que el juego ve el control.
-3. **Bloq Mayús** activa el **mouse como cámara**: el cursor se queda quieto y el mouse mueve el
-   stick derecho. Presiónalo otra vez para soltar el mouse (en menús, por ejemplo).
+3. **Bloq Mayús** activa el **mouse como cámara**: el mouse mueve el stick derecho, el cursor
+   se oculta sobre el juego y la rueda manda D-pad ← / →. Presiónalo otra vez para
+   soltar el mouse (en menús, por ejemplo).
 4. **F12** pausa kb2pad. Úsalo cuando vayas a escribir en otra ventana, porque kb2pad lee el
    teclado aunque la ventana del juego no tenga el foco. `Alt + Tab` no manda nada al juego.
+
+**Avisos**: al conectar o pausar el control, al activar el mouse como cámara y al cambiar de
+modo sale una notificación del escritorio. No afecta al juego y se apagan en *Sticks y teclas
+especiales*.
 
 **Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta),
 **Alt + 3** (Arco) o **Alt + Q** (Por defecto). La app muestra el modo actual y avisa con una

@@ -53,7 +53,9 @@ flowchart LR
 - **Combos con modificador**: una tecla manda `LT` y luego `B`, para menús tipo "LT + botón".
   También con el D-pad (por ejemplo `LT + D-pad ↑`).
 - **Varias salidas en una tecla**: por ejemplo `C` = `Y + B`.
-- **Mouse como cámara** (stick derecho) que se activa y desactiva con Bloq Mayús.
+- **Mouse como cámara** (stick derecho) que se activa y desactiva con Bloq Mayús. Mientras está
+  activo, el cursor se oculta sobre el juego.
+- **La rueda del mouse** también se puede asignar (por defecto, D-pad ← / →).
 - **Menú radial con el mouse**: mientras sostienes la tecla, el mouse apunta y se queda en el
   objeto; al soltar, lo selecciona.
 - **Tocar o sostener**: la misma tecla puede ser un botón normal si la tocas y abrir el radial si
@@ -63,6 +65,8 @@ flowchart LR
   ventana sin bordes con el tamaño calculado para tu monitor. Si la ventana cambia al rotar, la
   regresa a su lugar.
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
+- **Avisos** del escritorio al cambiar de modo, al activar el mouse como cámara y cuando el control
+  se conecta, se pausa o se desconecta. Se pueden apagar uno por uno.
 - Con **Alt presionado** no se manda nada al juego: `Alt+Tab` y los atajos de scrcpy (`Alt+O`)
   no disparan botones.
 
@@ -133,15 +137,16 @@ Outlanders, como ejemplo. En los combos (`LT + B`), el primer botón entra prime
 | `4` | LT + A | Especial |
 | `5` | RT + LT | Especial Felyne |
 | `G` | D-pad ↑ + LT | Fabricar |
-| `Tab` | D-pad → + RB | Cambiar objetivo |
+| Rueda del mouse* | D-pad ← (arriba) / D-pad → (abajo) | |
 | `T` | B + RB | Preparar trampa |
 | `Shift` | L3 | Correr |
 | `M` / `Esc` | Select / Start | |
 | `F12` | Pausar o reanudar kb2pad | Para escribir en otras apps |
 | `Bloq Mayús` | Mouse como cámara sí/no | |
 
-\* El click izquierdo solo cuenta como botón con el mouse en modo cámara. Fuera de ese modo,
-el mouse funciona normal en la ventana.
+\* El click izquierdo y la rueda solo cuentan como botón con el mouse en modo cámara. Fuera de
+ese modo, el mouse funciona normal en la ventana (clics y scroll en los menús). Cada muesca de la
+rueda es un toque del D-pad.
 
 ## Modos
 
@@ -158,7 +163,8 @@ que no lo cambien.
 | `Alt + 3` | **Arco** | Click izq = RT (disparar) · Click der = Y · `R` = Y. `F` = B y `C` = Y + B siguen igual. |
 
 - Cambias de modo **en plena partida**, sin soltar lo que tienes presionado (sigues corriendo).
-- La app muestra el modo actual y avisa con una notificación al cambiar.
+- La app muestra el modo actual y avisa con una notificación al cambiar. La notificación la
+  dibuja el escritorio encima de la ventana: no le quita el foco ni afecta al juego.
 - En la pestaña **Botones** eliges el modo arriba: lo que viene de *Por defecto* sale en gris, y
   si lo editas se copia a ese modo. Puedes crear modos nuevos, ponerles su `Alt + tecla`,
   desactivar una tecla solo en un modo y elegir con qué modo arranca el control.

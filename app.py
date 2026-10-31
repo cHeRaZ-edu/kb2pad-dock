@@ -16,9 +16,10 @@ import sys
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import (QEvent, QLibraryInfo, QLocale, QProcess, QProcessEnvironment, Qt, QTimer,
+from PyQt6.QtCore import (QEvent, QLibraryInfo, QLocale, QPoint, QProcess, QProcessEnvironment, Qt, QTimer,
                           QTranslator, QUrl, pyqtSignal)
-from PyQt6.QtGui import QAction, QDesktopServices, QFont, QGuiApplication, QIcon, QKeySequence, QPalette
+from PyQt6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, QIcon, QKeySequence,
+                         QPainter, QPalette)
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
@@ -86,7 +87,7 @@ class CaptureDialog(QDialog):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.result_name = None
         lay = QVBoxLayout(self)
-        msg = QLabel("Presiona una tecla o un boton del mouse\n"
+        msg = QLabel("Presiona una tecla, un boton del mouse o gira la rueda\n"
                      "(con el cursor dentro de esta ventana)\n\n"
                      "Se cancela solo en 6 segundos.")
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -123,6 +124,15 @@ class CaptureDialog(QDialog):
             name = QT_MOUSE.get(ev.button())
             if name:
                 self.result_name = name
+                self.accept()
+            return True
+        if t == QEvent.Type.Wheel:
+            d = ev.angleDelta()
+            if abs(d.y()) >= abs(d.x()) and d.y():
+                self.result_name = "WHEEL_UP" if d.y() > 0 else "WHEEL_DOWN"
+            elif d.x():
+                self.result_name = "WHEEL_LEFT" if d.x() > 0 else "WHEEL_RIGHT"
+            if self.result_name:
                 self.accept()
             return True
         return super().event(ev)
@@ -705,15 +715,18 @@ class SticksTab(QWidget):
         form.addRow("Mouse como camara on/off:", self.mouselook)
         lay.addWidget(box)
 
-        box = QGroupBox("Modos (Alt + tecla)")
+        box = QGroupBox("Modos, mouse y avisos")
         form = QFormLayout(box)
         self.alt_blocks = QCheckBox("Con Alt presionado no mandar nada al juego "
                                     "(Alt+Tab, Alt+O de scrcpy, cambios de modo)")
-        self.notify_mode = QCheckBox("Avisar con una notificacion al cambiar de modo")
-        self.alt_blocks.toggled.connect(self.changed.emit)
-        self.notify_mode.toggled.connect(self.changed.emit)
-        form.addRow(self.alt_blocks)
-        form.addRow(self.notify_mode)
+        self.hide_cursor = QCheckBox("Ocultar el cursor con el mouse como camara")
+        self.notify_mode = QCheckBox("Avisar al cambiar de modo")
+        self.notify_mouse = QCheckBox("Avisar al activar o desactivar el mouse como camara")
+        self.notify_control = QCheckBox("Avisar cuando el control se conecta, se pausa o se desconecta")
+        for w in (self.alt_blocks, self.hide_cursor, self.notify_mode, self.notify_mouse,
+                  self.notify_control):
+            w.toggled.connect(self.changed.emit)
+            form.addRow(w)
         hint = QLabel("Los modos y sus atajos se editan en la pestaña Botones.")
         hint.setStyleSheet("color: gray;")
         form.addRow(hint)
@@ -726,8 +739,12 @@ class SticksTab(QWidget):
                 f.set_value(name)
         self.pause.set_value(cfg["special"]["pause"])
         self.mouselook.set_value(cfg["special"]["mouselook"])
-        self.alt_blocks.setChecked(bool(cfg["special"].get("alt_blocks", True)))
-        self.notify_mode.setChecked(bool(cfg["special"].get("notify_mode", True)))
+        sp = cfg["special"]
+        self.alt_blocks.setChecked(bool(sp.get("alt_blocks", True)))
+        self.hide_cursor.setChecked(bool(sp.get("hide_cursor", True)))
+        self.notify_mode.setChecked(bool(sp.get("notify_mode", True)))
+        self.notify_mouse.setChecked(bool(sp.get("notify_mouse", True)))
+        self.notify_control.setChecked(bool(sp.get("notify_control", True)))
 
     def store(self, cfg):
         for key, fs in self.fields.items():
@@ -735,7 +752,10 @@ class SticksTab(QWidget):
         cfg["special"]["pause"] = self.pause.value()
         cfg["special"]["mouselook"] = self.mouselook.value()
         cfg["special"]["alt_blocks"] = self.alt_blocks.isChecked()
+        cfg["special"]["hide_cursor"] = self.hide_cursor.isChecked()
         cfg["special"]["notify_mode"] = self.notify_mode.isChecked()
+        cfg["special"]["notify_mouse"] = self.notify_mouse.isChecked()
+        cfg["special"]["notify_control"] = self.notify_control.isChecked()
 
 
 def _dspin(lo, hi, step, decimals=2, suffix=""):
@@ -1087,6 +1107,45 @@ class ScrcpyTab(QWidget):
         self.log.emit(f"Celular {vw}x{vh} -> ventana {ww}x{wh} centrada en {g.width()}x{g.height()}")
 
 
+class CursorBlanker(QWidget):
+    """Ventana invisible encima del juego con cursor en blanco, mientras el mouse es camara.
+    No recibe clics (el mouse esta capturado por el control) ni toma el foco."""
+
+    def __init__(self):
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint |
+                 Qt.WindowType.WindowDoesNotAcceptFocus)
+        if IS_WINDOWS:
+            flags |= Qt.WindowType.Tool
+        super().__init__(None, flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setCursor(Qt.CursorShape.BlankCursor)
+        self.setWindowTitle("kb2pad-cursor")
+
+    def paintEvent(self, _ev):
+        # alfa 1/255: invisible, pero la ventana si "cuenta" para el cursor (con alfa 0 Windows la ignora)
+        QPainter(self).fillRect(self.rect(), QColor(0, 0, 0, 1))
+
+    def cover(self, screen):
+        if IS_WINDOWS:
+            self.setGeometry(screen.geometry())
+            self.show()
+            self.raise_()
+            try:      # el cursor cambia hasta que Windows lo "mueve": se reacomoda en el mismo lugar
+                import ctypes
+                from ctypes import wintypes
+                pt = wintypes.POINT()
+                ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+                ctypes.windll.user32.SetCursorPos(pt.x, pt.y)
+            except (OSError, AttributeError):
+                pass
+        else:
+            self.setScreen(screen)
+            self.setGeometry(screen.geometry())
+            self.showFullScreen()
+            self.raise_()
+
+
 # ================================================================ ventana principal
 class MainWindow(QMainWindow):
     def __init__(self, path):
@@ -1219,6 +1278,10 @@ class MainWindow(QMainWindow):
         if icon.isNull():
             icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
         self.setWindowIcon(icon)
+        self._connected = False
+        self._mouselook = False
+        self._mode_name = ""
+        self.blanker = CursorBlanker()
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(icon, self)
@@ -1341,15 +1404,51 @@ class MainWindow(QMainWindow):
         for line in data.splitlines():
             if line.strip():
                 self.append_log(f"[{tag}] {line}")
-                if tag == "control" and line.startswith("Modo: "):
-                    self._mode_changed(line[6:].strip())
+                if tag == "control":
+                    self._engine_line(line.strip())
+
+    def _engine_line(self, line):
+        if line.startswith("Modo: "):
+            self._mode_changed(line[6:].strip())
+        elif line.startswith("Mouse = camara"):
+            self._set_mouselook(True)
+        elif line.startswith("Mouse = normal"):
+            self._set_mouselook(False)
+        elif line == "ACTIVO":
+            if not self._connected:
+                self._connected = True
+                self._notify("control", f"Control conectado · Modo: {self._mode_name}")
+            else:
+                self._notify("control", "Control activo")
+        elif line == "PAUSADO":
+            self._notify("control", "Control en pausa")
+
+    def _notify(self, kind, text):
+        if self.tray and self.cfg["special"].get(f"notify_{kind}", True):
+            self.tray.showMessage(C.APP_NAME, text, QSystemTrayIcon.MessageIcon.Information, 1500)
 
     def _mode_changed(self, name):
+        self._mode_name = name
         self.lbl_mode.setText(f"   Modo: {name}")
         self.lbl_mode.setStyleSheet("font-weight: bold;")
-        if self.tray and self.cfg["special"].get("notify_mode", True):
-            self.tray.showMessage(C.APP_NAME, f"Modo: {name}",
-                                  QSystemTrayIcon.MessageIcon.Information, 1500)
+        if self._connected:                 # al arrancar ya va en "Control conectado"
+            self._notify("mode", f"Modo: {name}")
+
+    def _game_screen(self):
+        sc = self.cfg["scrcpy"]
+        center = QPoint(int(sc["x"]) + int(sc["width"]) // 2, int(sc["y"]) + int(sc["height"]) // 2)
+        return QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+
+    def _set_mouselook(self, on, quiet=False):
+        if on == self._mouselook:
+            return
+        self._mouselook = on
+        if not quiet:
+            self._notify("mouse", "Mouse: camara (stick derecho)" if on else "Mouse: normal")
+        if on and self.cfg["special"].get("hide_cursor", True):
+            self.blanker.cover(self._game_screen())
+        else:
+            self.blanker.hide()
 
     def append_log(self, text):
         self.logbox.appendPlainText(text)
@@ -1363,6 +1462,10 @@ class MainWindow(QMainWindow):
 
     def _engine_finished(self, code, _status):
         self.append_log(f"[control] termino (codigo {code})")
+        self._set_mouselook(False, quiet=True)
+        if self._connected:
+            self._connected = False
+            self._notify("control", "Control desconectado")
         if IS_WINDOWS and code == 3:
             if QMessageBox.question(
                     self, "Falta ViGEmBus",
@@ -1563,6 +1666,9 @@ class MainWindow(QMainWindow):
             self.engine.closeWriteChannel()
             if not self.engine.waitForFinished(2500):
                 self.engine.kill()
+        self.blanker.close()
+        if self.tray:
+            self.tray.hide()
         ev.accept()
 
 

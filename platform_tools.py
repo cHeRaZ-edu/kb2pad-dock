@@ -165,6 +165,10 @@ if IS_WINDOWS:
     _u32.IsIconic.argtypes = (W.HWND,)
     _u32.ShowWindow.argtypes = (W.HWND, ctypes.c_int)
     _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _u32.GetWindowLongW.argtypes = (W.HWND, ctypes.c_int)
+    _u32.GetWindowLongW.restype = ctypes.c_long
+    _u32.SetWindowLongW.argtypes = (W.HWND, ctypes.c_int, ctypes.c_long)
+    _u32.SetLayeredWindowAttributes.argtypes = (W.HWND, W.DWORD, ctypes.c_ubyte, W.DWORD)
     SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
 
     class _DpiUnaware:
@@ -191,7 +195,7 @@ if IS_WINDOWS:
             return None
         return r.left, r.top, r.right - r.left, r.bottom - r.top
 
-    def find_window(pid):
+    def find_window(pid, min_size=100):
         found = []
 
         def cb(hwnd, _lparam):
@@ -199,7 +203,7 @@ if IS_WINDOWS:
             _u32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
             if p.value == pid and _u32.IsWindowVisible(hwnd):
                 g = _rect(hwnd)
-                if g and g[2] > 100 and g[3] > 100:
+                if g and g[2] >= min_size and g[3] >= min_size:
                     found.append((g[2] * g[3], hwnd))
             return True
 
@@ -216,6 +220,14 @@ if IS_WINDOWS:
     def set_window_geometry(wid, x, y, w, h):
         with _DpiUnaware():
             _u32.SetWindowPos(wid, None, int(x), int(y), int(w), int(h), SWP_NOZORDER | SWP_NOACTIVATE)
+
+    def set_window_opacity(wid, value):
+        """0.0 = invisible (sigue pudiendo tener el foco del teclado), 1.0 = normal."""
+        if not wid or not _u32.IsWindow(wid):
+            return False
+        ex = _u32.GetWindowLongW(wid, -20)                       # GWL_EXSTYLE
+        _u32.SetWindowLongW(wid, -20, ex | 0x00080000)            # WS_EX_LAYERED
+        return bool(_u32.SetLayeredWindowAttributes(wid, 0, max(1, min(255, int(value * 255))), 2))
 
     def focus_window(wid):
         """Trae la ventana al frente con el foco del teclado (Windows no deja si no 'le toca':
@@ -247,13 +259,15 @@ else:
         except KeyError:
             return None
 
-    def find_window(pid):
+    def find_window(pid, min_size=100):
         best = None
-        for line in _xdotool("search", "--pid", str(pid)).split():
+        # ventanas chicas (el chat): solo las visibles, SDL tiene ventanas auxiliares sin mapear
+        extra = ["--onlyvisible"] if min_size < 100 else []
+        for line in _xdotool("search", *extra, "--pid", str(pid)).split():
             if not line.isdigit():
                 continue
             g = window_geometry(line)
-            if g and g[2] > 100 and g[3] > 100:
+            if g and g[2] >= min_size and g[3] >= min_size:
                 if best is None or g[2] * g[3] > best[1]:
                     best = (line, g[2] * g[3])
         return best[0] if best else None
@@ -266,4 +280,33 @@ else:
         if not wid or not shutil.which("xdotool"):
             return False
         _xdotool("windowactivate", str(wid))
+        return True
+
+    def set_window_opacity(wid, value):
+        """_NET_WM_WINDOW_OPACITY (KWin y otros compositores) con libX11 por ctypes."""
+        if not wid:
+            return False
+        import ctypes
+        import ctypes.util
+        try:
+            x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+        except OSError:
+            return False
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XOpenDisplay.argtypes = (ctypes.c_char_p,)
+        x11.XInternAtom.restype = ctypes.c_ulong
+        x11.XInternAtom.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int)
+        x11.XChangeProperty.argtypes = (ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)
+        x11.XFlush.argtypes = x11.XCloseDisplay.argtypes = (ctypes.c_void_p,)
+        dpy = x11.XOpenDisplay(None)
+        if not dpy:
+            return False
+        try:
+            atom = x11.XInternAtom(dpy, b"_NET_WM_WINDOW_OPACITY", 0)
+            val = ctypes.c_ulong(max(1, int(value * 0xFFFFFFFF)))   # formato 32 = long en Xlib
+            x11.XChangeProperty(dpy, int(wid), atom, 6, 32, 0, ctypes.byref(val), 1)   # CARDINAL, Replace
+            x11.XFlush(dpy)
+        finally:
+            x11.XCloseDisplay(dpy)
         return True

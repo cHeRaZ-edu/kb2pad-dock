@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -247,7 +247,8 @@ DEFAULT_CONFIG = {
         "hide_cursor": True,         # ocultar el cursor con el mouse como camara
         "chat": "KEY_T",             # Alt + T: modo chat (el teclado deja de ser control)
         "mode_back": "KEY_Q",        # Alt + Q: sale del chat al modo que tenias (fuera del chat: modo de inicio)
-        "chat_window": True,         # al entrar al chat abre una ventanita de scrcpy para escribir
+        "chat_window": True,         # al entrar al chat abre una ventanita (invisible) de scrcpy para escribir
+        "chat_keyboard": "uhid",     # uhid = teclado fisico (Android oculta su teclado); sdk = teclado del cel
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
         "move": ["KEY_W", "KEY_S", "KEY_A", "KEY_D"],
@@ -616,17 +617,21 @@ def build_scrcpy_cmd(sc, window=None, version=None):
     return cmd + extra
 
 
-CHAT_TITLE = "kb2pad - chat (escribe aqui; Alt+1/2/3 o Alt+Q para volver al juego)"
+CHAT_TITLE = "kb2pad-chat"
+CHAT_KEYBOARDS = {"uhid": "Teclado fisico: Android oculta su teclado (recomendado)",
+                  "sdk": "Teclado del celular en pantalla"}
 
 
-def build_chat_cmd(sc, window=None):
-    """Segunda ventana de scrcpy solo con teclado (sin video ni audio) para escribir en el chat."""
+def build_chat_cmd(sc, window=None, keyboard="uhid"):
+    """Segunda ventana de scrcpy solo con teclado (sin video ni audio) para escribir en el chat.
+    La ventana es diminuta y la GUI la vuelve transparente: solo esta para recibir el teclado."""
     cmd = [tool_path(sc, "scrcpy")]
     serial = effective_serial(sc)
     if serial:
         cmd += ["-s", serial]
-    cmd += ["--no-video", "--no-audio", "--keyboard=sdk", "--mouse=disabled",
-            "--always-on-top", f"--window-title={CHAT_TITLE}"]
+    keyboard = keyboard if keyboard in CHAT_KEYBOARDS else "uhid"
+    cmd += ["--no-video", "--no-audio", f"--keyboard={keyboard}", "--mouse=disabled",
+            "--window-borderless", "--always-on-top", f"--window-title={CHAT_TITLE}"]
     if window is not None:
         x, y, w, h = (int(v) for v in window)
         cmd += [f"--window-x={x}", f"--window-y={y}", f"--window-width={w}", f"--window-height={h}"]

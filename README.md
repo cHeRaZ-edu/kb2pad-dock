@@ -100,8 +100,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.2.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.2.0-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.2.1-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.2.1-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -188,14 +188,21 @@ valores por defecto (las teclas que no se usan en combate son iguales en las tre
 Para escribir en el chat del juego sin que las letras disparen botones:
 
 1. Abre el chat en el juego (con el mouse o con su botón).
-2. Presiona **`Alt + T`**. El icono de la bandeja cambia a un **teclado** y se abre una ventanita
-   de scrcpy con el título *kb2pad - chat*: lo que escribes ahí llega al celular (acentos y `ñ`
-   incluidos). El mouse sigue funcionando como control.
-3. Para volver a jugar: **`Alt + 1/2/3`** (ese modo) o **`Alt + Q`** (el modo que tenías). La
-   ventanita se cierra sola.
+2. Presiona **`Alt + T`**. El icono de la bandeja cambia a un **teclado** y lo que escribes llega
+   al celular. El mouse sigue funcionando como control.
+3. Para volver a jugar: **`Alt + 1/2/3`** (ese modo) o **`Alt + Q`** (el modo que tenías).
 
-En el chat solo cuenta el **Alt izquierdo**, porque `AltGr + Q` escribe `@`. Los atajos se cambian
-en *Sticks y teclas especiales*.
+Por dentro, kb2pad abre una segunda conexión de scrcpy, solo de teclado, en una ventana invisible
+que toma el foco. Esa conexión se presenta en el celular como un **teclado físico**, así que
+Android **no muestra su teclado en pantalla** y el juego queda despejado.
+
+- **La primera vez**, configura el idioma de ese teclado para que salgan la `ñ` y los acentos:
+  entra al chat (`Alt + T`) y en *Sticks y teclas especiales* pulsa **Idioma del teclado en el
+  celular...**. En el celular elige el teclado **scrcpy** → *Español (Latinoamérica)* (o el de tu
+  teclado). Se queda guardado.
+- Si haces clic en el juego mientras escribes, vuelve a presionar `Alt + T` para seguir escribiendo.
+- Si prefieres el teclado del celular en pantalla, cámbialo en *Teclado* (misma pestaña).
+- En el chat solo cuenta el **Alt izquierdo**, porque `AltGr + Q` escribe `@`.
 
 ## Iniciar el juego
 

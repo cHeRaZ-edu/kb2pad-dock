@@ -672,6 +672,7 @@ class BindingsTab(QWidget):
 
 class SticksTab(QWidget):
     changed = pyqtSignal()
+    keyboard_settings = pyqtSignal()
     DIRS = ("Arriba", "Abajo", "Izquierda", "Derecha")
 
     def __init__(self, parent=None):
@@ -706,17 +707,31 @@ class SticksTab(QWidget):
         form = QFormLayout(box)
         self.chat = KeyField(allow_empty=True)
         self.mode_back = KeyField(allow_empty=True)
-        self.chat_window = QCheckBox("Abrir una ventanita para escribir en el celular al entrar al chat")
+        self.chat_window = QCheckBox("Mandar lo que escribo al celular (abre una ventana invisible de scrcpy)")
+        self.chat_keyboard = QComboBox()
+        for key, label in C.CHAT_KEYBOARDS.items():
+            self.chat_keyboard.addItem(label, key)
+        kb_layout = QPushButton("Idioma del teclado en el celular...")
+        kb_layout.setToolTip("Abre en el celular Ajustes > Teclado fisico. Hazlo con el chat activo (Alt+T) "
+                             "y elige el teclado 'scrcpy' > Español (Latinoamerica) o el de tu teclado.")
+        kb_layout.clicked.connect(self.keyboard_settings.emit)
         for f in (self.chat, self.mode_back):
             f.changed.connect(self.changed.emit)
         self.chat_window.toggled.connect(self.changed.emit)
+        self.chat_keyboard.currentIndexChanged.connect(self.changed.emit)
         form.addRow("Entrar al chat:  Alt +", self.chat)
         form.addRow("Volver al modo:  Alt +", self.mode_back)
         form.addRow(self.chat_window)
+        row = QHBoxLayout()
+        row.addWidget(self.chat_keyboard, 1)
+        row.addWidget(kb_layout)
+        form.addRow("Teclado:", row)
         hint = QLabel("En el chat el teclado deja de ser control (el mouse sigue igual) y lo que escribes "
                       "llega al celular. Se sale con Alt + el atajo de un modo (Alt+1, Alt+2...) o con "
-                      "'Volver al modo', que regresa al modo que tenias. Fuera del chat, 'Volver al modo' "
-                      "va al modo de inicio. En el chat solo cuenta el Alt izquierdo (AltGr escribe @).")
+                      "'Volver al modo', que regresa al modo que tenias. Si haces clic en el juego mientras "
+                      "escribes, presiona Alt+T otra vez para seguir escribiendo. Con 'Teclado fisico', la "
+                      "primera vez configura el idioma (boton de arriba, con el chat activo) para que salgan "
+                      "la ñ y los acentos. En el chat solo cuenta el Alt izquierdo (AltGr escribe @).")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: gray;")
         form.addRow(hint)
@@ -749,6 +764,7 @@ class SticksTab(QWidget):
         self.chat.set_value(sp.get("chat", ""))
         self.mode_back.set_value(sp.get("mode_back", ""))
         self.chat_window.setChecked(bool(sp.get("chat_window", True)))
+        self.chat_keyboard.setCurrentIndex(max(0, self.chat_keyboard.findData(sp.get("chat_keyboard", "uhid"))))
 
     def store(self, cfg):
         for key, fs in self.fields.items():
@@ -760,6 +776,7 @@ class SticksTab(QWidget):
         cfg["special"]["chat"] = self.chat.value()
         cfg["special"]["mode_back"] = self.mode_back.value()
         cfg["special"]["chat_window"] = self.chat_window.isChecked()
+        cfg["special"]["chat_keyboard"] = self.chat_keyboard.currentData() or "uhid"
 
 
 def _dspin(lo, hi, step, decimals=2, suffix=""):
@@ -1573,6 +1590,7 @@ class MainWindow(QMainWindow):
         for t in (self.t_bind, self.t_sticks, self.t_mouse, self.t_scrcpy):
             t.changed.connect(self.mark_dirty)
         self.t_scrcpy.log.connect(self.append_log)
+        self.t_sticks.keyboard_settings.connect(self.open_keyboard_settings)
 
         self.logbox = QPlainTextEdit()
         self.logbox.setReadOnly(True)
@@ -2108,29 +2126,52 @@ class MainWindow(QMainWindow):
             self.append_log("[chat] el teclado ya no es control; abre el juego para escribir en el celular")
             return
         if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
+            self._refocus_chat()                   # Alt+T otra vez: seguir escribiendo
             return
         gx, gy, gw, gh = (PT.window_geometry(self.geo_wid) if self.geo_wid else None) or self._screen_rect()
-        cw, ch = min(720, max(360, gw // 2)), 110
-        window = (gx + (gw - cw) // 2, gy + gh - ch - max(40, gh // 8), cw, ch)
-        cmd = C.build_chat_cmd(sc, window)
+        window = (gx + gw - 8, gy + gh - 8, 8, 8)    # diminuta en la esquina; ademas se vuelve transparente
+        cmd = C.build_chat_cmd(sc, window, self.cfg["special"].get("chat_keyboard", "uhid"))
         env = QProcessEnvironment.systemEnvironment()
         for k, v in C.scrcpy_env_overrides(sc).items():
             env.insert(k, v)
         self.chat_proc.setProcessEnvironment(env)
-        self.append_log("[chat] abriendo ventana para escribir (Alt+1/2/3 o Alt+Q para volver)")
+        self.append_log("[chat] escribiendo en el celular (Alt+1/2/3 o Alt+Q para volver)")
         self.chat_proc.start(cmd[0], cmd[1:])
         self.chat_focus_until = time.monotonic() + 6
         self.chat_focus.start()
 
     def _chat_focus_tick(self):
         """Espera a que aparezca la ventanita del chat y le da el foco para escribir de inmediato."""
-        pid = self.chat_proc.processId()
-        wid = PT.find_window(pid) if pid else None
+        wid = self._chat_window()
         if wid is not None:
             self.chat_focus.stop()
+            PT.set_window_opacity(wid, 0.0)
             QTimer.singleShot(150, lambda: PT.focus_window(wid))
-        elif time.monotonic() > self.chat_focus_until or not pid:
+        elif time.monotonic() > self.chat_focus_until or not self.chat_proc.processId():
             self.chat_focus.stop()
+
+    def _chat_window(self):
+        pid = self.chat_proc.processId()
+        return PT.find_window(pid, min_size=1) if pid else None
+
+    def _refocus_chat(self):
+        wid = self._chat_window()
+        if wid is not None:
+            PT.focus_window(wid)
+
+    def open_keyboard_settings(self):
+        """Ajustes > Teclado fisico en el celular (para elegir el idioma del teclado 'scrcpy')."""
+        sc = self.collect()["scrcpy"]
+        if not C.tool_exists(sc, "adb"):
+            QMessageBox.warning(self, "adb", "No encontre adb.")
+            return
+        if self.chat_proc.state() == QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "Teclado", "Primero entra al chat con Alt+T (con el juego abierto): "
+                                    "el teclado 'scrcpy' solo aparece en el celular mientras el chat esta activo.")
+        PT.spawn(PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", "am", "start",
+                            "-a", "android.settings.HARD_KEYBOARD_SETTINGS"))
+        self.append_log("[chat] abriendo Ajustes > Teclado fisico en el celular: elige 'scrcpy' y el idioma "
+                        "de tu teclado (ej. Español (Latinoamerica))")
 
     def _close_chat(self, refocus=False):
         self.chat_focus.stop()

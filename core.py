@@ -434,7 +434,10 @@ class Mapper:
         if ev.value == 1 and ev.code not in cfg.alt_keys and any(a in self.pressed for a in alts):
             if ev.code == cfg.chat_key:
                 self.consumed.add(ev.code)
-                self.set_chat(not self.chat)
+                if self.chat:
+                    log("Chat: ON")        # ya estaba: la GUI le regresa el foco a la ventanita
+                else:
+                    self.set_chat(True)
                 return
             if ev.code == cfg.back_key:
                 self.consumed.add(ev.code)

@@ -10,6 +10,7 @@ Windows: kb2pad.exe (necesita el driver ViGEmBus y scrcpy para Windows)
 """
 import copy
 import glob
+import json
 import os
 import re
 import shutil
@@ -25,7 +26,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QMenu, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QSpinBox, QSplitter, QStyle, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
+    QPushButton, QRadioButton, QScrollArea, QSpinBox, QSplitter, QStyle, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -144,8 +145,9 @@ class KeyField(QWidget):
     """Combo editable con todos los nombres + boton para capturar."""
     changed = pyqtSignal()
 
-    def __init__(self, name="", parent=None):
+    def __init__(self, name="", parent=None, allow_empty=False):
         super().__init__(parent)
+        self.allow_empty = allow_empty
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.combo = QComboBox()
@@ -176,7 +178,10 @@ class KeyField(QWidget):
 
     def _update(self):
         n = self.value()
-        if C.is_valid_input(n):
+        if not n and self.allow_empty:
+            self.label.setText("(sin atajo)")
+            self.label.setStyleSheet("color: gray;")
+        elif C.is_valid_input(n):
             self.label.setText(C.input_label(n))
             self.label.setStyleSheet("")
         else:
@@ -697,6 +702,26 @@ class SticksTab(QWidget):
         form.addRow("Mouse como camara on/off:", self.mouselook)
         lay.addWidget(box)
 
+        box = QGroupBox("Chat (escribir en el juego)")
+        form = QFormLayout(box)
+        self.chat = KeyField(allow_empty=True)
+        self.mode_back = KeyField(allow_empty=True)
+        self.chat_window = QCheckBox("Abrir una ventanita para escribir en el celular al entrar al chat")
+        for f in (self.chat, self.mode_back):
+            f.changed.connect(self.changed.emit)
+        self.chat_window.toggled.connect(self.changed.emit)
+        form.addRow("Entrar al chat:  Alt +", self.chat)
+        form.addRow("Volver al modo:  Alt +", self.mode_back)
+        form.addRow(self.chat_window)
+        hint = QLabel("En el chat el teclado deja de ser control (el mouse sigue igual) y lo que escribes "
+                      "llega al celular. Se sale con Alt + el atajo de un modo (Alt+1, Alt+2...) o con "
+                      "'Volver al modo', que regresa al modo que tenias. Fuera del chat, 'Volver al modo' "
+                      "va al modo de inicio. En el chat solo cuenta el Alt izquierdo (AltGr escribe @).")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray;")
+        form.addRow(hint)
+        lay.addWidget(box)
+
         box = QGroupBox("Modos y mouse")
         form = QFormLayout(box)
         self.alt_blocks = QCheckBox("Con Alt presionado no mandar nada al juego "
@@ -721,6 +746,9 @@ class SticksTab(QWidget):
         sp = cfg["special"]
         self.alt_blocks.setChecked(bool(sp.get("alt_blocks", True)))
         self.hide_cursor.setChecked(bool(sp.get("hide_cursor", True)))
+        self.chat.set_value(sp.get("chat", ""))
+        self.mode_back.set_value(sp.get("mode_back", ""))
+        self.chat_window.setChecked(bool(sp.get("chat_window", True)))
 
     def store(self, cfg):
         for key, fs in self.fields.items():
@@ -729,6 +757,9 @@ class SticksTab(QWidget):
         cfg["special"]["mouselook"] = self.mouselook.value()
         cfg["special"]["alt_blocks"] = self.alt_blocks.isChecked()
         cfg["special"]["hide_cursor"] = self.hide_cursor.isChecked()
+        cfg["special"]["chat"] = self.chat.value()
+        cfg["special"]["mode_back"] = self.mode_back.value()
+        cfg["special"]["chat_window"] = self.chat_window.isChecked()
 
 
 def _dspin(lo, hi, step, decimals=2, suffix=""):
@@ -859,8 +890,32 @@ class ScrcpyTab(QWidget):
         detect.clicked.connect(self.detect_devices)
         row.addWidget(self.serial, 1)
         row.addWidget(detect)
-        form.addRow("Serial (adb):", row)
+        form.addRow("Serial (cable):", row)
         form.addRow("", self._hint("Vacio = el unico dispositivo conectado."))
+        self.connection = QComboBox()
+        self.connection.addItem("Cable USB", "usb")
+        self.connection.addItem("Red (Wi-Fi)", "wifi")
+        form.addRow("Conexion:", self.connection)
+        row = QHBoxLayout()
+        self.wifi_address = QLineEdit()
+        self.wifi_address.setPlaceholderText("192.168.1.50:5555")
+        b_setup = QPushButton("Activar red con el cable")
+        b_setup.setToolTip("Con el celular conectado por USB: activa adb por Wi-Fi (adb tcpip 5555), "
+                           "lee la IP del celular y se conecta. Despues puedes desconectar el cable.")
+        b_setup.clicked.connect(self.wifi_setup)
+        b_pair = QPushButton("Emparejar...")
+        b_pair.setToolTip("Android 11+: Depuracion inalambrica > Vincular con codigo (sin cable)")
+        b_pair.clicked.connect(self.wifi_pair)
+        b_conn = QPushButton("Conectar")
+        b_conn.clicked.connect(self.wifi_connect)
+        row.addWidget(self.wifi_address, 1)
+        row.addWidget(b_setup)
+        row.addWidget(b_pair)
+        row.addWidget(b_conn)
+        form.addRow("IP del celular:", row)
+        self.wifi_hint = self._hint("Misma red que la PC (mejor 5 GHz) y bitrate de 8M a 16M. "
+                                    "Si el celular se reinicia, vuelve a activar la red.")
+        form.addRow("", self.wifi_hint)
         lay.addWidget(box)
 
         box = QGroupBox("Video")
@@ -892,7 +947,11 @@ class ScrcpyTab(QWidget):
             g = s.geometry()
             self.screen.addItem(f"{s.name()}  {g.width()}x{g.height()} @ {g.x()},{g.y()}")
         fit = QPushButton("Ajustar a la pantalla")
+        fit.setToolTip("Del tamaño del video del celular, centrada (sin barras negras)")
         fit.clicked.connect(self.fit_to_screen)
+        full = QPushButton("Toda la pantalla")
+        full.setToolTip("Ventana del tamaño de la pantalla (el video queda centrado con barras negras)")
+        full.clicked.connect(self.full_screen)
         grid.addWidget(self.borderless, 0, 0, 1, 2)
         grid.addWidget(self.set_geometry, 0, 2, 1, 2)
         grid.addWidget(QLabel("X:"), 1, 0)
@@ -904,14 +963,17 @@ class ScrcpyTab(QWidget):
         grid.addWidget(QLabel("Alto:"), 2, 2)
         grid.addWidget(self.h, 2, 3)
         grid.addWidget(QLabel("Pantalla:"), 3, 0)
-        grid.addWidget(self.screen, 3, 1, 1, 2)
-        grid.addWidget(fit, 3, 3)
+        grid.addWidget(self.screen, 3, 1, 1, 1)
+        grid.addWidget(fit, 3, 2)
+        grid.addWidget(full, 3, 3)
         grid.addWidget(self.force_x11, 4, 0, 1, 4)
         self.force_x11.setVisible(not IS_WINDOWS)
         lay.addWidget(box)
 
         box = QGroupBox("Al iniciar el juego")
         form = QFormLayout(box)
+        self.ask_on_start = QCheckBox("Preguntar al iniciar: abrir una app (con buscador) o solo mostrar la pantalla")
+        form.addRow(self.ask_on_start)
         row = QHBoxLayout()
         self.launch_app = QCheckBox("Abrir la app en el celular")
         self.package = QLineEdit()
@@ -920,10 +982,14 @@ class ScrcpyTab(QWidget):
         row.addWidget(self.package, 1)
         form.addRow(row)
         self.wait_landscape = QCheckBox("Esperar a que el celular este en horizontal antes de abrir la ventana")
-        self.keep_geometry = QCheckBox("Mantener el tamaño y posicion si la ventana cambia al rotar"
-                                       + ("" if IS_WINDOWS else " (necesita xdotool)"))
         form.addRow(self.wait_landscape)
-        form.addRow(self.keep_geometry)
+        self.rotate_fit = QComboBox()
+        for key, label in C.ROTATE_FIT.items():
+            self.rotate_fit.addItem(label, key)
+        form.addRow("Al pasar a horizontal:", self.rotate_fit)
+        form.addRow("", self._hint("Se revisa todo el tiempo que la ventana este abierta: si sales del juego "
+                                   "y vuelves, la ventana se acomoda sola"
+                                   + ("." if IS_WINDOWS else " (necesita xdotool; en Wayland abre scrcpy con X11).")))
         lay.addWidget(box)
 
         box = QGroupBox("Avanzado")
@@ -941,8 +1007,11 @@ class ScrcpyTab(QWidget):
         for w in (self.max_fps, self.x, self.y, self.w, self.h):
             w.valueChanged.connect(self._changed)
         for w in (self.no_mipmaps, self.stay_awake, self.borderless, self.set_geometry, self.force_x11,
-                  self.launch_app, self.wait_landscape, self.keep_geometry):
+                  self.launch_app, self.wait_landscape, self.ask_on_start):
             w.toggled.connect(self._changed)
+        self.rotate_fit.currentIndexChanged.connect(self._changed)
+        self.connection.currentIndexChanged.connect(self._changed)
+        self.wifi_address.textChanged.connect(self._changed)
         self.package.textChanged.connect(self._changed)
         self.scrcpy_dir.textChanged.connect(self._changed)
         self.bitrate.textChanged.connect(self._changed)
@@ -950,17 +1019,20 @@ class ScrcpyTab(QWidget):
         self.codec.currentTextChanged.connect(self._changed)
         self.serial.currentTextChanged.connect(self._changed)
         self.set_geometry.toggled.connect(self._sync)
+        self.connection.currentIndexChanged.connect(self._sync)
 
     @staticmethod
     def _hint(text):
         lbl = QLabel(text)
         lbl.setStyleSheet("color: gray;")
+        lbl.setWordWrap(True)
         return lbl
 
     def _sync(self):
         on = self.set_geometry.isChecked()
         for w in (self.x, self.y, self.w, self.h):
             w.setEnabled(on)
+        self.wifi_hint.setVisible(self.connection.currentData() == "wifi")
 
     def _changed(self, *_):
         self._update_preview()
@@ -983,13 +1055,23 @@ class ScrcpyTab(QWidget):
             "extra_args": self.extra.text().strip(),
             "launch_app": self.launch_app.isChecked(),
             "package": self.package.text().strip(),
+            "ask_on_start": self.ask_on_start.isChecked(),
             "wait_landscape": self.wait_landscape.isChecked(),
-            "keep_geometry": self.keep_geometry.isChecked(),
+            "rotate_fit": self.rotate_fit.currentData() or "screen",
+            "keep_geometry": (self.rotate_fit.currentData() or "screen") != "off",
+            "connection": self.connection.currentData() or "usb",
+            "wifi_address": self.wifi_address.text().strip(),
         }
 
     def _update_preview(self):
         try:
-            cmd = C.build_scrcpy_cmd(self.values())
+            vals = self.values()
+            window = None
+            if vals["rotate_fit"] == "screen":
+                center = QPoint(vals["x"] + vals["width"] // 2, vals["y"] + vals["height"] // 2)
+                g = (QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()).geometry()
+                window = (g.x(), g.y(), g.width(), g.height())
+            cmd = C.build_scrcpy_cmd(vals, window)
             env = C.scrcpy_env_overrides(self.values())
             prefix = " ".join(f"{k}={v}" for k, v in env.items())
             self.preview.setPlainText((prefix + " " if prefix else "") + " ".join(cmd))
@@ -1016,7 +1098,10 @@ class ScrcpyTab(QWidget):
         self.launch_app.setChecked(bool(sc["launch_app"]))
         self.package.setText(sc["package"])
         self.wait_landscape.setChecked(bool(sc["wait_landscape"]))
-        self.keep_geometry.setChecked(bool(sc["keep_geometry"]))
+        self.ask_on_start.setChecked(bool(sc.get("ask_on_start", True)))
+        self.rotate_fit.setCurrentIndex(max(0, self.rotate_fit.findData(sc.get("rotate_fit", "screen"))))
+        self.connection.setCurrentIndex(max(0, self.connection.findData(sc.get("connection", "usb"))))
+        self.wifi_address.setText(sc.get("wifi_address", ""))
         self._sync()
         self._update_preview()
 
@@ -1056,7 +1141,7 @@ class ScrcpyTab(QWidget):
             QMessageBox.information(self, "adb", "No hay dispositivos. Revisa la depuracion USB.")
 
     def fit_to_screen(self):
-        serial = self.serial.currentText().strip()
+        serial = C.effective_serial(self.values())
         try:
             out = self._adb(*(["-s", serial] if serial else []), "shell", "wm", "size")
         except RuntimeError as exc:
@@ -1078,6 +1163,313 @@ class ScrcpyTab(QWidget):
         self.x.setValue(g.x() + (g.width() - ww) // 2)
         self.y.setValue(g.y() + (g.height() - wh) // 2)
         self.log.emit(f"Celular {vw}x{vh} -> ventana {ww}x{wh} centrada en {g.width()}x{g.height()}")
+
+    def full_screen(self):
+        screens = QGuiApplication.screens()
+        g = screens[max(0, self.screen.currentIndex())].geometry()
+        self.set_geometry.setChecked(True)
+        self.x.setValue(g.x())
+        self.y.setValue(g.y())
+        self.w.setValue(g.width())
+        self.h.setValue(g.height())
+        self.rotate_fit.setCurrentIndex(max(0, self.rotate_fit.findData("screen")))
+        self.log.emit(f"Ventana: toda la pantalla {g.width()}x{g.height()} en {g.x()},{g.y()}")
+
+    # ---------- red ----------
+    def _adb_path(self):
+        sc = self.values()
+        if not C.tool_exists(sc, "adb"):
+            QMessageBox.warning(self, "adb", "No encontre adb. " + (
+                "Elige la carpeta de scrcpy (trae adb.exe)." if IS_WINDOWS else "Instala android-tools."))
+            return None
+        return C.tool_path(sc, "adb")
+
+    def _set_wifi(self, addr):
+        self.wifi_address.setText(addr)
+        self.connection.setCurrentIndex(self.connection.findData("wifi"))
+
+    def wifi_setup(self):
+        adb = self._adb_path()
+        if not adb:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            serial = PT.adb_usb_serial(adb, self.serial.currentText().strip())
+            if not serial:
+                raise RuntimeError("No veo el celular por cable. Conectalo por USB con la depuracion activada.")
+            ip = PT.phone_ip(adb, serial)
+            if not ip:
+                raise RuntimeError("No pude leer la IP del celular. ¿Esta conectado al Wi-Fi?")
+            self.log.emit(f"adb: activando red en {serial} ({ip})")
+            PT.run([adb, "-s", serial, "tcpip", "5555"], timeout=8)
+            addr = f"{ip}:5555"
+            ok, out = False, ""
+            for _ in range(6):             # el celular tarda un poco en abrir el puerto
+                time.sleep(0.8)
+                ok, out = PT.adb_connect(adb, addr)
+                if ok:
+                    break
+        except RuntimeError as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Red", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+        self.log.emit(f"adb: {out}")
+        if ok:
+            self._set_wifi(addr)
+            QMessageBox.information(self, "Red", f"Conectado a {addr}.\n\nYa puedes desconectar el cable. "
+                                    "Guarda para que se use al iniciar el juego.")
+        else:
+            QMessageBox.warning(self, "Red", f"No me pude conectar a {addr}:\n{out}")
+
+    def wifi_pair(self):
+        adb = self._adb_path()
+        if not adb:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Emparejar por Wi-Fi (Android 11+)")
+        form = QFormLayout(dlg)
+        info = QLabel("En el celular: Opciones de desarrollador > Depuracion inalambrica > "
+                      "Vincular dispositivo con codigo de vinculacion.")
+        info.setWordWrap(True)
+        form.addRow(info)
+        pair_addr = QLineEdit()
+        pair_addr.setPlaceholderText("192.168.1.50:37123  (IP y puerto de vinculacion)")
+        code = QLineEdit()
+        code.setPlaceholderText("123456")
+        conn_addr = QLineEdit()
+        conn_addr.setPlaceholderText("192.168.1.50:41234  (IP y puerto de la pantalla principal)")
+        form.addRow("Vincular en:", pair_addr)
+        form.addRow("Codigo:", code)
+        form.addRow("Conectar a:", conn_addr)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if not dlg.exec():
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        out = PT.run([adb, "pair", pair_addr.text().strip(), code.text().strip()], timeout=20).strip()
+        self.log.emit(f"adb pair: {out}")
+        ok, cout = (False, "")
+        if "success" in out.lower() and conn_addr.text().strip():
+            ok, cout = PT.adb_connect(adb, conn_addr.text().strip())
+            self.log.emit(f"adb: {cout}")
+        QApplication.restoreOverrideCursor()
+        if ok:
+            self._set_wifi(conn_addr.text().strip())
+            QMessageBox.information(self, "Red", "Emparejado y conectado. Guarda para usarlo al iniciar.")
+        elif "success" in out.lower():
+            QMessageBox.information(self, "Red", "Emparejado. Escribe la IP:puerto de la pantalla de "
+                                    "Depuracion inalambrica y pulsa Conectar." + (f"\n\n{cout}" if cout else ""))
+        else:
+            QMessageBox.warning(self, "Red", f"No se pudo emparejar:\n{out or 'sin respuesta'}")
+
+    def wifi_connect(self):
+        adb = self._adb_path()
+        if not adb:
+            return
+        addr = C.wifi_address(self.values())
+        if not addr:
+            QMessageBox.information(self, "Red", "Escribe la IP del celular (ej. 192.168.1.50:5555).")
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        ok, out = PT.adb_connect(adb, addr)
+        QApplication.restoreOverrideCursor()
+        self.log.emit(f"adb: {out or 'sin respuesta'}")
+        if ok:
+            self._set_wifi(self.wifi_address.text().strip())
+        else:
+            QMessageBox.warning(self, "Red", f"No me pude conectar a {addr}:\n{out}")
+
+
+# ================================================================ inicio: app o solo pantalla
+APPS_CACHE = C.CONFIG_DIR / "apps.json"
+
+
+def load_apps_cache():
+    try:
+        with open(APPS_CACHE, encoding="utf-8") as f:
+            return [tuple(a[:3]) for a in json.load(f).get("apps", []) if len(a) >= 2]
+    except (OSError, ValueError, AttributeError, TypeError):
+        return []
+
+
+def save_apps_cache(apps):
+    try:
+        APPS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        with open(APPS_CACHE, "w", encoding="utf-8") as f:
+            json.dump({"apps": [list(a) for a in apps]}, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+class LaunchDialog(QDialog):
+    """Al iniciar: abrir una app del celular (lista con buscador) o solo mostrar la pantalla."""
+
+    def __init__(self, sc, parent=None):
+        super().__init__(parent)
+        self.sc = sc
+        self.setWindowTitle("Iniciar el celular")
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+
+        self.r_app = QRadioButton("Abrir una app en el celular")
+        self.r_screen = QRadioButton("Solo mostrar la pantalla (no abre nada)")
+        lay.addWidget(self.r_app)
+
+        row = QHBoxLayout()
+        row.addSpacing(24)
+        self.apps = QComboBox()
+        self.apps.setEditable(True)
+        self.apps.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.apps.lineEdit().setPlaceholderText("Escribe para buscar (nombre o paquete)")
+        comp = self.apps.completer()
+        comp.setFilterMode(Qt.MatchFlag.MatchContains)
+        comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        comp.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.btn_refresh = QPushButton("Actualizar lista")
+        self.btn_refresh.clicked.connect(self.refresh)
+        row.addWidget(self.apps, 1)
+        row.addWidget(self.btn_refresh)
+        lay.addLayout(row)
+
+        row = QHBoxLayout()
+        row.addSpacing(24)
+        self.status = QLabel()
+        self.status.setStyleSheet("color: gray;")
+        self.status.setWordWrap(True)
+        row.addWidget(self.status, 1)
+        lay.addLayout(row)
+
+        row = QHBoxLayout()
+        row.addSpacing(24)
+        self.wait = QCheckBox("Esperar a que el celular este en horizontal antes de abrir la ventana")
+        self.wait.setChecked(bool(sc.get("wait_landscape", True)))
+        row.addWidget(self.wait)
+        lay.addLayout(row)
+
+        lay.addWidget(self.r_screen)
+        lay.addSpacing(8)
+        self.ask = QCheckBox("Preguntar cada vez (se vuelve a activar en la pestaña Juego)")
+        self.ask.setChecked(True)
+        lay.addWidget(self.ask)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("Iniciar")
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+        self.proc = QProcess(self)
+        self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.proc.finished.connect(self._list_done)
+        no_console(self.proc)
+        self.kill_timer = QTimer(self)
+        self.kill_timer.setSingleShot(True)
+        self.kill_timer.timeout.connect(self.proc.kill)
+
+        self.r_app.toggled.connect(self._sync)
+        (self.r_app if sc.get("launch_app", True) else self.r_screen).setChecked(True)
+        self._fill(load_apps_cache())
+        if self.apps.count() <= 1:
+            QTimer.singleShot(0, self.refresh)
+        else:
+            self.status.setText(f"{self.apps.count()} apps (lista guardada; 'Actualizar lista' la vuelve a leer)")
+        self._sync()
+
+    def _sync(self):
+        on = self.r_app.isChecked()
+        for w in (self.apps, self.btn_refresh, self.wait):
+            w.setEnabled(on)
+
+    def _fill(self, apps):
+        current = self.package() if self.apps.count() else (self.sc.get("package") or "")
+        apps = sorted(apps, key=lambda a: (bool(a[2]) if len(a) > 2 else False, a[0].lower()))
+        if current and not any(a[1] == current for a in apps):
+            apps.insert(0, (current, current, False))
+        self.apps.clear()
+        for a in apps:
+            name, pkg = a[0], a[1]
+            system = len(a) > 2 and a[2]
+            text = pkg if name == pkg else f"{name}   ({pkg})"
+            self.apps.addItem(text + ("   · sistema" if system else ""), pkg)
+        idx = self.apps.findData(current)
+        if idx >= 0:
+            self.apps.setCurrentIndex(idx)
+
+    def package(self):
+        text = self.apps.currentText().strip()
+        idx = self.apps.findText(text)
+        if idx >= 0:
+            return self.apps.itemData(idx)
+        if re.fullmatch(r"[A-Za-z][\w]*(\.[\w]+)+", text):
+            return text
+        low = text.lower()
+        for i in range(self.apps.count()):
+            if low and low in self.apps.itemText(i).lower():
+                return self.apps.itemData(i)
+        return ""
+
+    def refresh(self):
+        if self.proc.state() != QProcess.ProcessState.NotRunning:
+            return
+        sc = self.sc
+        serial = C.effective_serial(sc)
+        if not C.tool_exists(sc, "scrcpy"):
+            self._fallback()
+            return
+        self.status.setText("Buscando las apps del celular... (tarda unos segundos)")
+        self.btn_refresh.setEnabled(False)
+        args = (["-s", serial] if serial else []) + ["--list-apps"]
+        self.proc.start(C.tool_path(sc, "scrcpy"), args)
+        self.kill_timer.start(30000)
+
+    def _list_done(self, *_):
+        self.kill_timer.stop()
+        self.btn_refresh.setEnabled(self.r_app.isChecked())
+        out = bytes(self.proc.readAllStandardOutput()).decode(errors="replace")
+        apps = PT.parse_app_list(out)
+        if apps:
+            save_apps_cache(apps)
+            self._fill(apps)
+            self.status.setText(f"{len(apps)} apps en el celular")
+        else:
+            self._fallback(out)
+
+    def _fallback(self, out=""):
+        sc = self.sc
+        apps = []
+        if C.tool_exists(sc, "adb"):
+            res = PT.run(PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc),
+                                    "shell", "pm", "list", "packages", "-3"), timeout=10)
+            apps = PT.parse_pm_packages(res)
+        if apps:
+            save_apps_cache(apps)
+            self._fill(apps)
+            self.status.setText(f"{len(apps)} apps (solo paquetes: tu scrcpy no tiene --list-apps)")
+        else:
+            last = [ln for ln in out.splitlines() if ln.strip()][-1:] or [""]
+            self.status.setText("No pude leer las apps. ¿El celular esta conectado?  " + last[0][:120])
+
+    def reject(self):
+        self.proc.kill()
+        super().reject()
+
+    def _accept(self):
+        if self.r_app.isChecked() and not self.package():
+            QMessageBox.information(self, "Iniciar", "Elige una app de la lista (o escribe su paquete).")
+            return
+        self.proc.kill()
+        self.accept()
+
+    def choice(self):
+        launch = self.r_app.isChecked()
+        out = {"launch_app": launch, "ask_on_start": self.ask.isChecked()}
+        if launch:
+            out["package"] = self.package()
+            out["wait_landscape"] = self.wait.isChecked()
+        return out
 
 
 class CursorBlanker(QWidget):
@@ -1167,10 +1559,17 @@ class MainWindow(QMainWindow):
         self.t_sticks = SticksTab()
         self.t_mouse = MouseTab()
         self.t_scrcpy = ScrcpyTab()
+        def scrolled(widget):
+            area = QScrollArea()
+            area.setWidgetResizable(True)
+            area.setFrameShape(QScrollArea.Shape.NoFrame)
+            area.setWidget(widget)
+            return area
+
         self.tabs.addTab(self.t_bind, "Botones")
-        self.tabs.addTab(self.t_sticks, "Sticks y teclas especiales")
-        self.tabs.addTab(self.t_mouse, "Mouse y radial")
-        self.tabs.addTab(self.t_scrcpy, "Juego (scrcpy)")
+        self.tabs.addTab(scrolled(self.t_sticks), "Sticks y teclas especiales")
+        self.tabs.addTab(scrolled(self.t_mouse), "Mouse y radial")
+        self.tabs.addTab(scrolled(self.t_scrcpy), "Juego (scrcpy)")
         for t in (self.t_bind, self.t_sticks, self.t_mouse, self.t_scrcpy):
             t.changed.connect(self.mark_dirty)
         self.t_scrcpy.log.connect(self.append_log)
@@ -1233,7 +1632,18 @@ class MainWindow(QMainWindow):
         self.game.started.connect(self._on_game_started)
         no_console(self.engine)
         no_console(self.game)
-        self.game.finished.connect(lambda *_: self.geo_timer.stop())
+        self.game.finished.connect(lambda *_: (self.geo_timer.stop(), self._close_chat()))
+
+        # ventanita de scrcpy para escribir en el chat (solo teclado)
+        self.chat_proc = QProcess(self)
+        self.chat_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.chat_proc.readyReadStandardOutput.connect(lambda: self._read_proc(self.chat_proc, "chat"))
+        self.chat_proc.errorOccurred.connect(lambda err: self.append_log(f"[chat] error: {err.name}"))
+        no_console(self.chat_proc)
+        self.chat_focus = QTimer(self)
+        self.chat_focus.setInterval(250)
+        self.chat_focus.timeout.connect(self._chat_focus_tick)
+        self.chat_focus_until = 0.0
 
         # espera de rotacion antes de abrir scrcpy
         self.wait_timer = QTimer(self)
@@ -1241,12 +1651,13 @@ class MainWindow(QMainWindow):
         self.wait_timer.timeout.connect(self._wait_landscape_tick)
         self.wait_deadline = 0.0
 
-        # mantener tamaño/posicion de la ventana al rotar
+        # acomodar la ventana cada vez que el celular pasa a horizontal
         self.geo_timer = QTimer(self)
         self.geo_timer.setInterval(800)
-        self.geo_timer.timeout.connect(self._keep_geometry_tick)
+        self.geo_timer.timeout.connect(self._fit_tick)
         self.geo_wid = None
         self.geo_misses = 0
+        self.geo_fails = 0
 
         icon = QIcon.fromTheme("input-gaming")
         if icon.isNull():
@@ -1255,6 +1666,7 @@ class MainWindow(QMainWindow):
         self._connected = False
         self._paused = False
         self._mouselook = False
+        self._chat = False
         self._mode_name = ""
         self.blanker = CursorBlanker()
         self.tray = None
@@ -1389,6 +1801,14 @@ class MainWindow(QMainWindow):
             self._set_mouselook(True)
         elif line.startswith("Mouse = normal"):
             self._set_mouselook(False)
+        elif line == "Chat: ON":
+            self._chat = True
+            self._update_tray()
+            self._open_chat()
+        elif line == "Chat: OFF":
+            self._chat = False
+            self._update_tray()
+            self._close_chat(refocus=True)
         elif line == "ACTIVO":
             self._connected, self._paused = True, False
             self._update_tray()
@@ -1405,7 +1825,10 @@ class MainWindow(QMainWindow):
         esta detenido o en pausa."""
         mode = C.find_mode(self.cfg, self._mode_name) if self._connected else None
         active = self._connected and not self._paused
-        if mode:
+        if self._connected and self._chat:
+            icon = icons.mode_icon("keyboard", active=active)
+            text = "Chat: el teclado escribe" + ("" if active else " (en pausa)")
+        elif mode:
             icon = mode_qicon(mode, active)
             state = "" if active else " (en pausa)"
             text = f"Modo: {mode['name']}{state}"
@@ -1446,7 +1869,8 @@ class MainWindow(QMainWindow):
     def _engine_finished(self, code, _status):
         self.append_log(f"[control] termino (codigo {code})")
         self._set_mouselook(False)
-        self._connected, self._paused = False, False
+        self._connected, self._paused, self._chat = False, False, False
+        self._close_chat()
         self._update_tray()
         if IS_WINDOWS and code == 3:
             if QMessageBox.question(
@@ -1534,14 +1958,29 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.critical(self, "scrcpy", f"Argumentos extra invalidos: {exc}")
             return
+        if sc.get("connection") == "wifi" and C.wifi_address(sc) and not self._wifi_connect(sc):
+            return
 
-        if sc.get("launch_app") and sc.get("package"):
-            args = PT.adb_cmd(C.tool_path(sc, "adb"), sc.get("serial", ""), "shell", "monkey",
+        if sc.get("ask_on_start", True):
+            dlg = LaunchDialog(sc, self)
+            if not dlg.exec():
+                return
+            sc.update(dlg.choice())
+            C.save_config(self.cfg, self.path)       # recuerda la eleccion (y la app) para la proxima
+            self._loading = True
+            self.t_scrcpy.load(self.cfg)
+            self._loading = False
+
+        launch = bool(sc.get("launch_app") and sc.get("package"))
+        if launch:
+            args = PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", "monkey",
                               "-p", sc["package"], "-c", "android.intent.category.LAUNCHER", "1")
             PT.spawn(args)
             self.append_log(f"[juego] abriendo {sc['package']} en el celular")
+        else:
+            self.append_log("[juego] solo pantalla (no abro ninguna app)")
 
-        if sc.get("wait_landscape"):
+        if launch and sc.get("wait_landscape"):
             self.wait_deadline = time.monotonic() + 25
             self.append_log("[juego] esperando a que el celular este en horizontal...")
             self.wait_timer.start()
@@ -1549,9 +1988,25 @@ class MainWindow(QMainWindow):
             return
         self._launch_scrcpy()
 
+    def _wifi_connect(self, sc):
+        """Modo red: adb connect antes de abrir scrcpy (si ya estaba conectado no tarda nada)."""
+        if not C.tool_exists(sc, "adb"):
+            QMessageBox.critical(self, "Red", "No encontre adb para conectarme por Wi-Fi.")
+            return False
+        addr = C.wifi_address(sc)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        ok, out = PT.adb_connect(C.tool_path(sc, "adb"), addr)
+        QApplication.restoreOverrideCursor()
+        self.append_log(f"[red] {out or 'sin respuesta de adb'}")
+        if not ok:
+            QMessageBox.warning(self, "Red", f"No me pude conectar al celular en {addr}.\n\n{out}\n\n"
+                                "Revisa que este en la misma red. Si se reinicio, conecta el cable y usa "
+                                "'Activar red con el cable' en la pestaña Juego (o cambia a Cable USB).")
+        return ok
+
     def _wait_landscape_tick(self):
         sc = self.cfg["scrcpy"]
-        rot = PT.device_rotation(C.tool_path(sc, "adb"), sc.get("serial", ""))
+        rot = PT.device_rotation(C.tool_path(sc, "adb"), C.effective_serial(sc))
         if rot in (1, 3):
             self.wait_timer.stop()
             self.append_log("[juego] celular en horizontal")
@@ -1566,7 +2021,8 @@ class MainWindow(QMainWindow):
         if self.game_running():
             return
         sc = self.cfg["scrcpy"]
-        cmd = C.build_scrcpy_cmd(sc)
+        window = self._screen_rect() if sc.get("rotate_fit") == "screen" else None
+        cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")))
         env = QProcessEnvironment.systemEnvironment()
         for k, v in C.scrcpy_env_overrides(sc).items():
             env.insert(k, v)
@@ -1575,48 +2031,117 @@ class MainWindow(QMainWindow):
         self.game.start(cmd[0], cmd[1:])
         self.update_status()
 
+    def _screen_rect(self, geo=None):
+        """Rectangulo de la pantalla donde esta la ventana (o donde se configuro)."""
+        scr = None
+        if geo:
+            x, y, w, h = geo
+            scr = QGuiApplication.screenAt(QPoint(x + w // 2, y + h // 2))
+        g = (scr or self._game_screen()).geometry()
+        return g.x(), g.y(), g.width(), g.height()
+
     def _on_game_started(self):
         sc = self.cfg["scrcpy"]
-        if not (sc.get("keep_geometry") and sc.get("set_geometry")):
+        if sc.get("rotate_fit", "screen") == "off":
             return
         missing = PT.window_tool_missing()
         if missing:
-            self.append_log(f"[juego] para mantener el tamaño al rotar {missing}")
+            self.append_log(f"[juego] para acomodar la ventana al girar {missing}")
             return
         self.geo_wid = None
         self.geo_misses = 0
+        self.geo_fails = 0
         QTimer.singleShot(1200, self.geo_timer.start)
 
     def _find_game_window(self):
         pid = self.game.processId()
         return PT.find_window(pid) if pid else None
 
-    def _keep_geometry_tick(self):
+    def _fit_tick(self):
+        """Cada vez que la ventana pasa a horizontal (abriste el juego, volviste del menu del cel...)
+        la acomoda: toda la pantalla o la posicion fija. En vertical no se toca."""
         if not self.game_running():
             self.geo_timer.stop()
             return
         sc = self.cfg["scrcpy"]
+        mode = sc.get("rotate_fit", "screen")
+        if mode == "off":
+            return
         if self.geo_wid is None:
             self.geo_wid = self._find_game_window()
             if self.geo_wid is None:
                 self.geo_misses += 1
-                if self.geo_misses >= 10:
-                    self.geo_timer.stop()
-                    self.append_log("[juego] no encontre la ventana de scrcpy" + ("" if IS_WINDOWS else
-                                    " con xdotool; si estas en Wayland activa 'Forzar X11' en la pestaña Juego"))
+                if self.geo_misses == 12:
+                    self.append_log("[juego] no encontre la ventana de scrcpy para acomodarla" + ("" if IS_WINDOWS
+                                    else " (xdotool solo ve ventanas X11; activa 'Forzar X11' en la pestaña Juego)"))
                 return
         geo = PT.window_geometry(self.geo_wid)
         if geo is None:
             self.geo_wid = None
             return
         x, y, w, h = geo
-        tx, ty, tw, th = int(sc["x"]), int(sc["y"]), int(sc["width"]), int(sc["height"])
         if w <= h:
-            return                                   # en vertical (menus del cel): no se toca
-        if max(abs(x - tx), abs(y - ty), abs(w - tw), abs(h - th)) <= 2:
+            self.geo_fails = 0                      # en vertical (menus del cel): no se toca
             return
+        if mode == "fixed":
+            tx, ty, tw, th = int(sc["x"]), int(sc["y"]), int(sc["width"]), int(sc["height"])
+        else:
+            tx, ty, tw, th = self._screen_rect(geo)
+        if max(abs(x - tx), abs(y - ty), abs(w - tw), abs(h - th)) <= 2:
+            self.geo_fails = 0
+            return
+        if self.geo_fails >= 4:
+            return                                  # no acepta ese tamaño: no insistir hasta el proximo giro
+        self.geo_fails += 1
         PT.set_window_geometry(self.geo_wid, tx, ty, tw, th)
-        self.append_log(f"[juego] ventana ajustada a {tw}x{th} en {tx},{ty}")
+        if self.geo_fails == 1:
+            self.append_log(f"[juego] ventana ajustada a {tw}x{th} en {tx},{ty}")
+        elif self.geo_fails == 4:
+            self.append_log(f"[juego] la ventana no acepta {tw}x{th} (se queda {w}x{h})")
+
+    # ---------- chat ----------
+    def _open_chat(self):
+        sc = self.cfg["scrcpy"]
+        if not self.cfg["special"].get("chat_window", True):
+            return
+        if not self.game_running():
+            self.append_log("[chat] el teclado ya no es control; abre el juego para escribir en el celular")
+            return
+        if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
+            return
+        gx, gy, gw, gh = (PT.window_geometry(self.geo_wid) if self.geo_wid else None) or self._screen_rect()
+        cw, ch = min(720, max(360, gw // 2)), 110
+        window = (gx + (gw - cw) // 2, gy + gh - ch - max(40, gh // 8), cw, ch)
+        cmd = C.build_chat_cmd(sc, window)
+        env = QProcessEnvironment.systemEnvironment()
+        for k, v in C.scrcpy_env_overrides(sc).items():
+            env.insert(k, v)
+        self.chat_proc.setProcessEnvironment(env)
+        self.append_log("[chat] abriendo ventana para escribir (Alt+1/2/3 o Alt+Q para volver)")
+        self.chat_proc.start(cmd[0], cmd[1:])
+        self.chat_focus_until = time.monotonic() + 6
+        self.chat_focus.start()
+
+    def _chat_focus_tick(self):
+        """Espera a que aparezca la ventanita del chat y le da el foco para escribir de inmediato."""
+        pid = self.chat_proc.processId()
+        wid = PT.find_window(pid) if pid else None
+        if wid is not None:
+            self.chat_focus.stop()
+            QTimer.singleShot(150, lambda: PT.focus_window(wid))
+        elif time.monotonic() > self.chat_focus_until or not pid:
+            self.chat_focus.stop()
+
+    def _close_chat(self, refocus=False):
+        self.chat_focus.stop()
+        if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
+            self.chat_proc.terminate()
+            QTimer.singleShot(1500, lambda: self.chat_proc.state() != QProcess.ProcessState.NotRunning
+                              and self.chat_proc.kill())
+            if refocus and self.game_running():
+                wid = self.geo_wid or self._find_game_window()
+                if wid:
+                    QTimer.singleShot(200, lambda: PT.focus_window(wid))
 
     def start_all(self):
         if not self.engine_running():
@@ -1639,6 +2164,9 @@ class MainWindow(QMainWindow):
             if ans == QMessageBox.StandardButton.Save and not self.save(quiet=True):
                 ev.ignore()
                 return
+        if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
+            self.chat_proc.kill()
+            self.chat_proc.waitForFinished(1000)
         if self.game_running():
             self.game.terminate()
             if not self.game.waitForFinished(2000):

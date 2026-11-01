@@ -1,7 +1,7 @@
 """
 Iconos de los modos, dibujados con QPainter (sin archivos ni plugins de imagen).
 
-    mode_icon("sword" | "crossbow" | "bow" | "gamepad" | "letter", letter="M", active=True) -> QIcon
+    mode_icon("sword" | "crossbow" | "bow" | "gamepad" | "keyboard" | "letter", letter="M", active=True) -> QIcon
 
 Se dibujan en una caja de 64x64 y se escalan; llevan contorno oscuro para verse
 en barras claras y oscuras.
@@ -168,6 +168,19 @@ def _gamepad(p, c):
         p.drawEllipse(QPointF(x, y), 2.6, 2.6)
 
 
+def _keyboard(p, c):
+    """Teclado (modo chat)."""
+    body = QPainterPath()
+    body.addRoundedRect(QRectF(3, 17, 58, 32), 5, 5)
+    _fill(p, body, c(PAD))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(c(METAL)))
+    for row, (y, n, x0) in enumerate(((22, 9, 7.5), (29, 8, 10.5), (36, 7, 13.5))):
+        for i in range(n):
+            p.drawRoundedRect(QRectF(x0 + i * 5.6, y, 4.2, 4.6), 1, 1)
+    p.drawRoundedRect(QRectF(17, 42.5, 30, 3.6), 1, 1)          # espacio
+
+
 def _letter(p, c, letter):
     p.setPen(_pen())
     p.setBrush(QBrush(c(METAL)))
@@ -180,7 +193,7 @@ def _letter(p, c, letter):
     p.drawText(QRectF(6, 6, 52, 52), Qt.AlignmentFlag.AlignCenter, (letter or "?")[:1].upper())
 
 
-_DRAW = {"sword": _sword, "crossbow": _crossbow, "bow": _bow, "gamepad": _gamepad}
+_DRAW = {"sword": _sword, "crossbow": _crossbow, "bow": _bow, "gamepad": _gamepad, "keyboard": _keyboard}
 
 
 def render(kind, size=64, letter="", active=True):

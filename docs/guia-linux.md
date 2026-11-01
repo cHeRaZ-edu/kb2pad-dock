@@ -45,10 +45,10 @@ control.
 
 2. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.1.0-linux.tar.gz` y descomprímelo:
+   `kb2pad-dock-v0.2.0-linux.tar.gz` y descomprímelo:
    ```fish
    mkdir -p ~/Apps
-   tar xzf ~/Descargas/kb2pad-dock-v0.1.0-linux.tar.gz -C ~/Apps
+   tar xzf ~/Descargas/kb2pad-dock-v0.2.0-linux.tar.gz -C ~/Apps
    ```
    O clona el repo:
    ```fish
@@ -85,14 +85,14 @@ Todo esto se hace en la pestaña **Juego (scrcpy)**:
 
 1. **Carpeta de scrcpy**: déjala vacía si instalaste scrcpy con tu gestor de paquetes (lo busca
    en el `PATH`). Si bajaste scrcpy suelto, elige su carpeta.
-2. **Serial (adb)**: clic en *Detectar*. Debe aparecer tu celular.
-3. **Abrir la app en el celular**: ya viene con el paquete de Monster Hunter Outlanders
-   (`com.garena.game.mho`). Para otro juego, búscalo con:
-   ```fish
-   adb shell pm list packages | grep -i nombre
-   ```
-4. **Pantalla** → elige tu monitor → **Ajustar a la pantalla**.
-5. Clic en **Guardar** (o `Ctrl+S`).
+2. **Serial (cable)**: clic en *Detectar*. Debe aparecer tu celular.
+3. **Pantalla** → elige tu monitor → **Toda la pantalla**. Con *Al pasar a horizontal* en
+   *Ocupar toda la pantalla* (viene así), la ventana se acomoda sola cada vez que el celular gira,
+   aunque salgas del juego y vuelvas.
+4. Clic en **Guardar** (o `Ctrl+S`).
+
+La app que se abre en el celular se elige al iniciar (Parte 4), con un buscador; ya viene
+Monster Hunter Outlanders (`com.garena.game.mho`).
 
 Los controles se cambian en la pestaña **Botones** (doble clic en una fila para editarla).
 Cualquier cambio que guardes se aplica al momento, aunque el control esté corriendo. También
@@ -102,9 +102,12 @@ puedes editar `~/.config/kb2pad/config.json` a mano: el control detecta el cambi
 
 1. Con el celular conectado, clic en **Iniciar todo**. La app:
    - inicia el control virtual (con `pkexec` te pide la contraseña),
-   - abre el juego en el celular,
-   - espera a que el celular gire a horizontal,
-   - y abre la ventana sin bordes del juego.
+   - te pregunta si **abrir una app** (escribe para buscarla entre las instaladas) o **solo
+     mostrar la pantalla**,
+   - abre la app en el celular y espera a que gire a horizontal,
+   - y abre la ventana sin bordes del juego, del tamaño de la pantalla.
+
+   ![Diálogo al iniciar](img/dialogo-inicio.png)
 2. En el juego, revisa que aparezcan los íconos de botones de control (A, B, LT…).
 3. **Bloq Mayús** activa el **mouse como cámara**: el mouse mueve el stick derecho, el cursor
    se oculta sobre el juego y la rueda manda D-pad ← / →. Presiónalo otra vez para
@@ -112,9 +115,15 @@ puedes editar `~/.config/kb2pad/config.json` a mano: el control detecta el cambi
 4. **F12** pausa kb2pad. Úsalo cuando vayas a escribir en otra ventana, porque kb2pad lee el
    teclado aunque la ventana del juego no tenga el foco. `Alt + Tab` no manda nada al juego.
 
-**Wayland:** si la ventana de scrcpy no respeta la posición o el tamaño, activa
-**Forzar X11** en la pestaña Juego. Para que la app regrese la ventana a su lugar después de
-rotar, necesitas `xdotool`.
+5. **Chat**: abre el chat en el juego y presiona **Alt + T**. El icono de la bandeja cambia a un
+   teclado y se abre una ventanita *kb2pad - chat*: lo que escribes ahí llega al celular (con
+   acentos y `ñ`) y las letras ya no disparan botones; el mouse sigue funcionando. Para volver:
+   **Alt + 1/2/3** o **Alt + Q** (regresa al modo que tenías). Si la ventanita no toma el foco
+   sola, haz clic en ella. En el chat solo cuenta el Alt izquierdo (`AltGr + Q` escribe `@`).
+
+**Wayland:** para poder acomodar la ventana, la app abre scrcpy con X11 (XWayland) mientras *Al
+pasar a horizontal* no esté en *No tocar la ventana*. Necesitas `xdotool`. Si aun así no respeta
+la posición, activa **Forzar X11** en la pestaña Juego.
 
 **Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta)
 o **Alt + 3** (Arco). El icono del modo actual (espada, ballesta o arco) se ve en la bandeja del
@@ -150,7 +159,23 @@ adb shell settings put system screen_brightness 1
 ```
 Para regresar al brillo automático: `adb shell settings put system screen_brightness_mode 1`.
 
-## Parte 6. Terminar
+## Parte 6. Jugar sin cable (opcional)
+
+1. En la pestaña **Juego (scrcpy)**, con el celular **conectado por cable** y en el mismo Wi-Fi que
+   la PC, clic en **Activar red con el cable**. La app activa adb por Wi-Fi, lee la IP del celular
+   y se conecta; *Conexión* cambia a **Red (Wi-Fi)**.
+2. Clic en **Guardar** y desconecta el cable.
+3. **Iniciar todo** como siempre: la app se conecta sola a esa IP.
+
+Sin cable desde el principio (Android 11+): en el celular, *Opciones de desarrollador →
+Depuración inalámbrica → Vincular dispositivo con código*, y en la app **Emparejar...** con la IP,
+el puerto y el código que muestra el celular; en *Conectar a* va la IP y el puerto de la pantalla
+principal de Depuración inalámbrica.
+
+Por Wi-Fi el video tiene más retraso: usa una red de 5 GHz y baja el **Bitrate** a 8M–16M. Si el
+celular se reinicia, repite el paso 1. Para volver al cable: *Conexión* = **Cable USB**.
+
+## Parte 7. Terminar
 
 - **Cerrar juego** cierra la ventana de scrcpy (el juego sigue abierto en el celular).
 - **Detener control** quita el control virtual.
@@ -177,3 +202,5 @@ sudo python ~/Apps/kb2pad-dock/engine.py --config ~/.config/kb2pad/config.json -
 | El juego no reacciona al teclado | Revisa que el control esté **activo** (no en pausa con F12) y que el juego muestre íconos de control. scrcpy debe ser 2.7 o más reciente. |
 | Los botones laterales del mouse no hacen nada | Activa *Mostrar teclas en el log*, presiónalos y mira qué código aparece. Asígnalo en la pestaña Botones con *Capturar*. |
 | "No encontré la ventana de scrcpy" en el log | Instala `xdotool` y, en Wayland, activa *Forzar X11*. |
+| Con Alt + T no se abre la ventanita del chat | Tiene que estar abierta la ventana del juego. Revisa que *Abrir una ventanita para escribir* esté activado en *Sticks y teclas especiales*. |
+| En red no conecta | Celular y PC en la misma red. Si el celular se reinició, conecta el cable y usa *Activar red con el cable* otra vez. |

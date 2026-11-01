@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -170,7 +170,7 @@ _TEMPLATE_CHANGES = {
     "Ballesta": [
         binding("BTN_LEFT", ["RT"], "Disparar (click izq)", camera_only=True),
         binding("BTN_RIGHT", ["Y"], "Cubrirse (click der)"),
-        binding("KEY_R", ["RB"], "Recargar (LB + RB)", modifier=["LB"]),
+        binding("KEY_R", ["RB"], "Recargar (LT + RB)", modifier=["LT"]),
         binding("KEY_V", ["B"], "Modo misil"),
     ],
     "Arco": [
@@ -236,13 +236,18 @@ def guess_icon(name):
     return "letter"
 
 
+CONFIG_VERSION = 4
+
 DEFAULT_CONFIG = {
-    "version": 3,
+    "version": CONFIG_VERSION,
     "special": {
         "pause": "KEY_F12",
         "mouselook": "KEY_CAPSLOCK",
         "alt_blocks": True,          # con Alt presionado no se manda nada al juego
         "hide_cursor": True,         # ocultar el cursor con el mouse como camara
+        "chat": "KEY_T",             # Alt + T: modo chat (el teclado deja de ser control)
+        "mode_back": "KEY_Q",        # Alt + Q: sale del chat al modo que tenias (fuera del chat: modo de inicio)
+        "chat_window": True,         # al entrar al chat abre una ventanita de scrcpy para escribir
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
         "move": ["KEY_W", "KEY_S", "KEY_A", "KEY_D"],
@@ -282,10 +287,19 @@ DEFAULT_CONFIG = {
         "extra_args": "",
         "launch_app": True,                 # abre el juego en el cel antes de scrcpy
         "package": "com.garena.game.mho",
+        "ask_on_start": True,               # preguntar: abrir una app o solo mostrar la pantalla
         "wait_landscape": True,             # espera a que el cel este en horizontal
-        "keep_geometry": True,              # si la ventana cambia al rotar, la regresa a su tamaño
+        "keep_geometry": True,              # (viejo) ahora es rotate_fit
+        "rotate_fit": "screen",             # al pasar a horizontal: screen = toda la pantalla,
+                                            # fixed = posicion/tamaño fijos, off = no tocar
+        "connection": "usb",                # usb | wifi
+        "wifi_address": "",                 # ip:puerto del celular en modo red
     },
 }
+
+
+ROTATE_FIT = {"screen": "Ocupar toda la pantalla", "fixed": "Usar la posicion y tamaño fijos",
+              "off": "No tocar la ventana"}
 
 
 def default_config():
@@ -344,10 +358,30 @@ def _migrate(out):
         sp.pop(k, None)
 
 
+def _migrate_v4(out):
+    """v3 -> v4: la recarga de la Ballesta de fabrica era LB + RB (es LT + RB) y
+    'mantener tamaño al rotar' pasa a 'rotate_fit'."""
+    for m in out.get("modes") or []:
+        if not isinstance(m, dict) or m.get("name") != "Ballesta":
+            continue
+        for b in m.get("bindings") or []:
+            if (isinstance(b, dict) and b.get("input") == "KEY_R" and list(b.get("modifier") or []) == ["LB"]
+                    and list(b.get("outputs") or []) == ["RB"]):
+                b["modifier"] = ["LT"]
+                if b.get("note") in ("", None, "Recargar (LB + RB)"):
+                    b["note"] = "Recargar (LT + RB)"
+    sc = out.get("scrcpy")
+    if isinstance(sc, dict) and "rotate_fit" not in sc and "keep_geometry" in sc:
+        sc["rotate_fit"] = "screen" if sc.get("keep_geometry") else "off"
+
+
 def normalize(data):
     """Rellena lo que falte con los defaults (por si el archivo es viejo o se edito a mano)."""
     out = copy.deepcopy(data) if isinstance(data, dict) else {}
+    old_version = int(out.get("version") or 1) if out else CONFIG_VERSION
     _migrate(out)
+    if old_version < 4:
+        _migrate_v4(out)
     base = default_config()
     for key, val in base.items():
         if key not in out:
@@ -365,7 +399,12 @@ def normalize(data):
     if not modes:
         modes = copy.deepcopy(base["modes"])
     out["modes"] = modes
-    out["version"] = 3
+    out["version"] = CONFIG_VERSION
+    sc = out["scrcpy"]
+    if sc.get("rotate_fit") not in ROTATE_FIT:
+        sc["rotate_fit"] = "screen"
+    if sc.get("connection") not in ("usb", "wifi"):
+        sc["connection"] = "usb"
     if out.get("start_mode") not in mode_names(out):
         out["start_mode"] = modes[0]["name"]
     return out
@@ -430,6 +469,12 @@ def validate(cfg):
             use(n, f"especial {label}")
 
     hotkeys, names = {}, set()
+    for k, label in (("chat", "Chat"), ("mode_back", "Volver de modo")):
+        hk = cfg["special"].get(k) or ""
+        if hk and check(hk, f"Atajo {label}"):
+            if hk in hotkeys:
+                errors.append(f"Alt + {input_label(hk)} es el atajo de '{hotkeys[hk]}' y de '{label}'")
+            hotkeys[hk] = label
     if not cfg.get("modes"):
         errors.append("Tiene que haber al menos un modo")
     for m in cfg.get("modes") or []:
@@ -498,6 +543,8 @@ def validate(cfg):
         shlex.split(cfg["scrcpy"].get("extra_args", ""))
     except ValueError as exc:
         errors.append(f"scrcpy: argumentos extra invalidos ({exc})")
+    if cfg["scrcpy"].get("connection") == "wifi" and not cfg["scrcpy"].get("wifi_address", "").strip():
+        warnings.append("Modo red sin direccion IP: se usara el serial/cable")
 
     return errors, warnings
 
@@ -522,10 +569,31 @@ def tool_exists(sc, name):
     return Path(p).is_file() or shutil.which(p) is not None
 
 
-def build_scrcpy_cmd(sc):
+def wifi_address(sc):
+    """ip:puerto normalizado ('' si no hay). Sin puerto se usa el 5555."""
+    addr = (sc.get("wifi_address") or "").strip()
+    if not addr:
+        return ""
+    if ":" not in addr:
+        addr += ":5555"
+    return addr
+
+
+def effective_serial(sc):
+    """El serial que se le pasa a adb/scrcpy: la IP en modo red, si no el serial del cable."""
+    if sc.get("connection") == "wifi" and wifi_address(sc):
+        return wifi_address(sc)
+    return (sc.get("serial") or "").strip()
+
+
+def build_scrcpy_cmd(sc, window=None, version=None):
+    """window: (x, y, w, h) para abrir la ventana ahi (si no, la posicion fija si esta activada).
+    version: (mayor, menor) de scrcpy; desde la 4.0 la ventana guarda la proporcion del video y no
+    deja ocupar toda la pantalla si no se le quita ese candado."""
     cmd = [tool_path(sc, "scrcpy")]
-    if sc.get("serial"):
-        cmd += ["-s", sc["serial"]]
+    serial = effective_serial(sc)
+    if serial:
+        cmd += ["-s", serial]
     cmd += SCRCPY_FIXED
     cmd += [f"--video-codec={sc['codec']}",
             f"--video-bit-rate={sc['bitrate']}",
@@ -536,13 +604,42 @@ def build_scrcpy_cmd(sc):
         cmd.append("--stay-awake")
     if sc.get("borderless"):
         cmd.append("--window-borderless")
-    if sc.get("set_geometry"):
-        cmd += [f"--window-x={int(sc['x'])}", f"--window-y={int(sc['y'])}",
-                f"--window-width={int(sc['width'])}", f"--window-height={int(sc['height'])}"]
-    if sc.get("extra_args"):
-        cmd += shlex.split(sc["extra_args"])
+    if window is None and sc.get("set_geometry"):
+        window = (sc["x"], sc["y"], sc["width"], sc["height"])
+    if window is not None:
+        x, y, w, h = (int(v) for v in window)
+        cmd += [f"--window-x={x}", f"--window-y={y}", f"--window-width={w}", f"--window-height={h}"]
+    extra = shlex.split(sc["extra_args"]) if sc.get("extra_args") else []
+    if (version and tuple(version) >= (4, 0) and sc.get("rotate_fit") == "screen"
+            and "--no-window-aspect-ratio-lock" not in extra):
+        cmd.append("--no-window-aspect-ratio-lock")
+    return cmd + extra
+
+
+CHAT_TITLE = "kb2pad - chat (escribe aqui; Alt+1/2/3 o Alt+Q para volver al juego)"
+
+
+def build_chat_cmd(sc, window=None):
+    """Segunda ventana de scrcpy solo con teclado (sin video ni audio) para escribir en el chat."""
+    cmd = [tool_path(sc, "scrcpy")]
+    serial = effective_serial(sc)
+    if serial:
+        cmd += ["-s", serial]
+    cmd += ["--no-video", "--no-audio", "--keyboard=sdk", "--mouse=disabled",
+            "--always-on-top", f"--window-title={CHAT_TITLE}"]
+    if window is not None:
+        x, y, w, h = (int(v) for v in window)
+        cmd += [f"--window-x={x}", f"--window-y={y}", f"--window-width={w}", f"--window-height={h}"]
     return cmd
 
 
+def wayland_session():
+    return not IS_WINDOWS and (os.environ.get("XDG_SESSION_TYPE") == "wayland"
+                               or bool(os.environ.get("WAYLAND_DISPLAY")))
+
+
 def scrcpy_env_overrides(sc):
-    return {"SDL_VIDEODRIVER": "x11"} if sc.get("force_x11") else {}
+    """X11 si se pide, o si hay que acomodar la ventana en Wayland (xdotool no ve ventanas Wayland).
+    SDL3 (scrcpy 3.3+) lee SDL_VIDEO_DRIVER; SDL2 lee SDL_VIDEODRIVER."""
+    x11 = sc.get("force_x11") or (wayland_session() and sc.get("rotate_fit", "screen") != "off")
+    return {"SDL_VIDEODRIVER": "x11", "SDL_VIDEO_DRIVER": "x11"} if x11 else {}

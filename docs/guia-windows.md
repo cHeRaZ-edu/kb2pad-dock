@@ -32,7 +32,7 @@ carga) y un juego que acepte control.
 
 1. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.1.0-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
+   `kb2pad-dock-v0.2.0-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
    No lo abras desde dentro del zip.
 2. **Descarga scrcpy.**
    En [scrcpy Releases](https://github.com/Genymobile/scrcpy/releases) baja el zip
@@ -52,16 +52,15 @@ Todo esto se hace en la pestaña **Juego (scrcpy)**:
 ![Pestaña Juego en Windows](img/windows-juego.png)
 
 1. **Carpeta de scrcpy**: clic en *Buscar…* y elige la carpeta donde descomprimiste scrcpy.
-2. **Serial (adb)**: clic en *Detectar*. Debe aparecer tu celular. Si no aparece, revisa el
+2. **Serial (cable)**: clic en *Detectar*. Debe aparecer tu celular. Si no aparece, revisa el
    cable, la depuración USB y el aviso de "¿Permitir depuración USB?" en el celular.
-3. **Abrir la app en el celular**: ya viene con el paquete de Monster Hunter Outlanders
-   (`com.garena.game.mho`). Para otro juego, conecta el celular y busca su paquete con:
-   ```bat
-   C:\scrcpy\adb.exe shell pm list packages | findstr /i nombre
-   ```
-4. **Pantalla** → elige tu monitor → **Ajustar a la pantalla**. Calcula el tamaño de la ventana
-   para que el juego llene el monitor sin barras negras.
-5. Clic en **Guardar** (o `Ctrl+S`).
+3. **Pantalla** → elige tu monitor → **Toda la pantalla**. Con *Al pasar a horizontal* en
+   *Ocupar toda la pantalla* (viene así), la ventana se acomoda sola cada vez que el celular gira,
+   aunque salgas del juego y vuelvas.
+4. Clic en **Guardar** (o `Ctrl+S`).
+
+La app que se abre en el celular se elige al iniciar (Parte 4), con un buscador; ya viene
+Monster Hunter Outlanders (`com.garena.game.mho`).
 
 Los controles se cambian en la pestaña **Botones** (doble clic en una fila para editarla).
 Cualquier cambio que guardes se aplica al momento, aunque el control esté corriendo.
@@ -70,9 +69,12 @@ Cualquier cambio que guardes se aplica al momento, aunque el control esté corri
 
 1. Con el celular conectado, clic en **Iniciar todo**. La app:
    - inicia el control virtual,
-   - abre el juego en el celular,
-   - espera a que el celular gire a horizontal,
-   - y abre la ventana sin bordes del juego.
+   - te pregunta si **abrir una app** (escribe para buscarla entre las instaladas) o **solo
+     mostrar la pantalla**,
+   - abre la app en el celular y espera a que gire a horizontal,
+   - y abre la ventana sin bordes del juego, del tamaño de la pantalla.
+
+   ![Diálogo al iniciar](img/dialogo-inicio.png)
 2. En el juego, revisa que aparezcan los íconos de botones de control (A, B, LT…). Eso confirma
    que el juego ve el control.
 3. **Bloq Mayús** activa el **mouse como cámara**: el mouse mueve el stick derecho, el cursor
@@ -80,6 +82,11 @@ Cualquier cambio que guardes se aplica al momento, aunque el control esté corri
    soltar el mouse (en menús, por ejemplo).
 4. **F12** pausa kb2pad. Úsalo cuando vayas a escribir en otra ventana, porque kb2pad lee el
    teclado aunque la ventana del juego no tenga el foco. `Alt + Tab` no manda nada al juego.
+5. **Chat**: abre el chat en el juego y presiona **Alt + T**. El icono de la bandeja cambia a un
+   teclado y se abre una ventanita *kb2pad - chat*: lo que escribes ahí llega al celular (con
+   acentos y `ñ`) y las letras ya no disparan botones; el mouse sigue funcionando. Para volver:
+   **Alt + 1/2/3** o **Alt + Q** (regresa al modo que tenías). Si la ventanita no toma el foco
+   sola, haz clic en ella. En el chat solo cuenta el Alt izquierdo (`AltGr + Q` escribe `@`).
 
 **Modos por arma**: cambia en plena partida con **Alt + 1** (Espada), **Alt + 2** (Ballesta)
 o **Alt + 3** (Arco). El icono del modo actual (espada, ballesta o arco) se ve en la bandeja del
@@ -110,7 +117,24 @@ llega al juego. Si desactivaste esa opción en *Sticks y teclas especiales*, pau
 Si con `Alt + O` la ventana también se pone negra, prende la pantalla con `Alt + Shift + O` y, en
 su lugar, baja el brillo del celular al mínimo.
 
-## Parte 6. Terminar
+## Parte 6. Jugar sin cable (opcional)
+
+1. En la pestaña **Juego (scrcpy)**, con el celular **conectado por cable** y en el mismo Wi-Fi que
+   la PC, clic en **Activar red con el cable**. La app activa adb por Wi-Fi, lee la IP del celular
+   y se conecta; *Conexión* cambia a **Red (Wi-Fi)**.
+2. Clic en **Guardar** y desconecta el cable.
+3. **Iniciar todo** como siempre: la app se conecta sola a esa IP.
+
+Sin cable desde el principio (Android 11+): en el celular, *Opciones de desarrollador →
+Depuración inalámbrica → Vincular dispositivo con código*, y en la app **Emparejar...** con la IP,
+el puerto y el código que muestra el celular; en *Conectar a* va la IP y el puerto de la pantalla
+principal de Depuración inalámbrica.
+
+Por Wi-Fi el video tiene más retraso: usa una red de 5 GHz y baja el **Bitrate** a 8M–16M. Si el
+celular se reinicia, repite el paso 1. Para volver al cable: *Conexión* = **Cable USB**. Si
+Windows pregunta por el firewall al conectar, permite el acceso a `adb.exe` en redes privadas.
+
+## Parte 7. Terminar
 
 - **Cerrar juego** cierra la ventana de scrcpy (el juego sigue abierto en el celular).
 - **Detener control** quita el control virtual.
@@ -127,5 +151,7 @@ su lugar, baja el brillo del celular al mínimo.
 | El log de scrcpy dice `INJECT_EVENTS` | Xiaomi/POCO/Redmi: activa *Depuración USB (Configuración de seguridad)* y reinicia el celular. |
 | El juego no reacciona al teclado | Revisa que el control esté **activo** (no en pausa con F12) y que el juego muestre íconos de control. scrcpy debe ser 2.7 o más reciente. |
 | Los botones laterales del mouse no hacen nada | Activa *Mostrar teclas en el log*, presiónalos y mira qué código aparece. Asígnalo en la pestaña Botones con *Capturar*. |
+| Con Alt + T no se abre la ventanita del chat | Tiene que estar abierta la ventana del juego. Revisa que *Abrir una ventanita para escribir* esté activado en *Sticks y teclas especiales*. |
+| En red no conecta | Celular y PC en la misma red. Si el celular se reinició, conecta el cable y usa *Activar red con el cable* otra vez. |
 | La ventana no queda donde esperas | Si tu Windows tiene escalado distinto de 100 %, ajusta X, Y, Ancho y Alto a mano en la pestaña Juego. |
 | SmartScreen o el antivirus bloquean `kb2pad.exe` | El `.exe` no está firmado y usa hooks de teclado para leer las teclas. Puedes revisar el código en este repo o compilarlo tú mismo (ver el README). |

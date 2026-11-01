@@ -63,9 +63,14 @@ flowchart LR
 - **Tocar o sostener**: la misma tecla puede ser un botón normal si la tocas y abrir el radial si
   la sostienes.
 - **Cambios en caliente**: guardas y el control aplica el mapeo al momento, sin reiniciar.
-- **Lanza el juego por ti**: abre la app en el celular, espera a que gire a horizontal y abre la
-  ventana sin bordes con el tamaño calculado para tu monitor. Si la ventana cambia al rotar, la
-  regresa a su lugar.
+- **Modo chat** (`Alt + T`): el teclado deja de ser control y escribe en el celular; el mouse
+  sigue igual. Regresas con `Alt + 1/2/3` o `Alt + Q`.
+- **Lanza el juego por ti**: al iniciar te pregunta si abrir una app (con buscador entre las apps
+  instaladas) o solo mostrar la pantalla. Espera a que el celular gire a horizontal y abre la
+  ventana sin bordes.
+- **La ventana ocupa toda la pantalla cada vez que el celular pasa a horizontal**, aunque salgas
+  del juego y vuelvas; no hace falta reconectar.
+- **Modo red (Wi-Fi)**: juega sin cable; se activa con un botón (o emparejando en Android 11+).
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
 - Con **Alt presionado** no se manda nada al juego: `Alt+Tab` y los atajos de scrcpy (`Alt+O`)
   no disparan botones.
@@ -95,8 +100,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.1.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.1.0-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.2.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.2.0-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -108,6 +113,7 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 - Un celular **Android** con **depuración USB** activada, conectado por USB o por Wi-Fi.
 - El juego debe **aceptar control** (gamepad).
 - **scrcpy 2.7 o más reciente** (es la versión que trae el soporte de control `--gamepad=uhid`).
+  Con scrcpy 3.0 o más reciente la lista de apps al iniciar muestra los nombres; antes, solo los paquetes.
 - **Windows**: el driver **ViGEmBus**. El instalador va incluido en la app (*Archivo → Instalar ViGEmBus*).
 - **Linux**: Python 3 con PyQt6 y python-evdev.
 
@@ -144,6 +150,8 @@ Monster Hunter Outlanders, como ejemplo. En los combos (`LT + B`), el primer bot
 | `M` / `Esc` | Select / Start | |
 | `F12` | Pausar o reanudar kb2pad | Para escribir en otras apps |
 | `Bloq Mayús` | Mouse como cámara sí/no | |
+| `Alt + T` | Modo chat (el teclado escribe en el celular) | Chat del juego |
+| `Alt + Q` | Volver: del chat al modo que tenías; fuera del chat, al modo de inicio | |
 
 \* El click izquierdo y la rueda solo cuentan como botón con el mouse en modo cámara. Fuera de
 ese modo, el mouse funciona normal en la ventana (clics y scroll en los menús). Cada muesca de la
@@ -158,7 +166,7 @@ valores por defecto (las teclas que no se usan en combate son iguales en las tre
 | Atajo | Modo | Icono | Qué cambia respecto a la tabla de arriba |
 |---|---|---|---|
 | `Alt + 1` | **Espada** | ![](docs/img/icono-espada.png) | Nada: es la tabla de arriba (armas cuerpo a cuerpo). |
-| `Alt + 2` | **Ballesta** | ![](docs/img/icono-ballesta.png) | Click izq = RT (disparar) · Click der = Y (cubrirse) · `R` = LB + RB (recargar) · `V` = B (modo misil). `C` sigue siendo Y + B. |
+| `Alt + 2` | **Ballesta** | ![](docs/img/icono-ballesta.png) | Click izq = RT (disparar) · Click der = Y (cubrirse) · `R` = LT + RB (recargar) · `V` = B (modo misil). `C` sigue siendo Y + B. |
 | `Alt + 3` | **Arco** | ![](docs/img/icono-arco.png) | Click izq = RT (disparar) · Click der = Y · `R` = Y. `F` = B y `C` = Y + B siguen igual. |
 
 - Cambias de modo **en plena partida**, sin soltar lo que tienes presionado (sigues corriendo).
@@ -174,6 +182,50 @@ valores por defecto (las teclas que no se usan en combate son iguales en las tre
   - **Al iniciar el control** elige con qué modo arranca.
 
 ![Modo Ballesta en la pestaña Botones](docs/img/linux-modo-ballesta.png)
+
+## Chat
+
+Para escribir en el chat del juego sin que las letras disparen botones:
+
+1. Abre el chat en el juego (con el mouse o con su botón).
+2. Presiona **`Alt + T`**. El icono de la bandeja cambia a un **teclado** y se abre una ventanita
+   de scrcpy con el título *kb2pad - chat*: lo que escribes ahí llega al celular (acentos y `ñ`
+   incluidos). El mouse sigue funcionando como control.
+3. Para volver a jugar: **`Alt + 1/2/3`** (ese modo) o **`Alt + Q`** (el modo que tenías). La
+   ventanita se cierra sola.
+
+En el chat solo cuenta el **Alt izquierdo**, porque `AltGr + Q` escribe `@`. Los atajos se cambian
+en *Sticks y teclas especiales*.
+
+## Iniciar el juego
+
+Con **Iniciar juego** (o **Iniciar todo**) la app pregunta qué hacer:
+
+![Diálogo al iniciar](docs/img/dialogo-inicio.png)
+
+- **Abrir una app**: escribe para buscar entre las apps instaladas (nombre o paquete).
+  *Actualizar lista* la vuelve a leer del celular.
+- **Solo mostrar la pantalla**: abre la ventana sin abrir nada en el celular.
+
+La elección se recuerda para la próxima vez. Si quitas *Preguntar cada vez*, se vuelve a activar en
+la pestaña **Juego (scrcpy)**.
+
+En *Al pasar a horizontal* eliges qué hace la ventana cada vez que el celular gira: **ocupar toda la
+pantalla** (por defecto, el video queda centrado con barras negras), usar la posición y el tamaño
+fijos, o no tocarla.
+
+## Modo red (Wi-Fi)
+
+En la pestaña **Juego (scrcpy)**, *Conexión* = **Red (Wi-Fi)**:
+
+- **Activar red con el cable**: con el celular conectado por USB, activa adb por Wi-Fi, lee la IP
+  y se conecta. Después puedes quitar el cable.
+- **Emparejar...** (Android 11+): *Opciones de desarrollador → Depuración inalámbrica → Vincular
+  dispositivo con código*, sin cable.
+- Al iniciar el juego, la app se conecta sola a esa IP.
+
+El video por Wi-Fi tiene más retraso que por cable: usa una red de 5 GHz y baja el bitrate a 8M–16M.
+Si el celular se reinicia, hay que volver a activar la red.
 
 ## Notas
 

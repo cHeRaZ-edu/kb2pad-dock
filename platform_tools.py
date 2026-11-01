@@ -51,6 +51,89 @@ def device_rotation(adb, serial):
     return None
 
 
+_version_cache = {}
+
+
+def scrcpy_version(scrcpy):
+    """(mayor, menor) de scrcpy, o None si no se pudo leer."""
+    if scrcpy not in _version_cache:
+        m = re.search(r"scrcpy\s+v?(\d+)\.(\d+)", run([scrcpy, "--version"], timeout=6))
+        _version_cache[scrcpy] = (int(m.group(1)), int(m.group(2))) if m else None
+    return _version_cache[scrcpy]
+
+
+_PKG = re.compile(r"^[A-Za-z][\w]*(\.[\w]+)+$")
+
+
+def parse_app_list(text):
+    """Salida de 'scrcpy --list-apps' -> [(nombre, paquete, es_del_sistema)]."""
+    apps, pending = [], None
+    started = False
+    for raw in text.splitlines():
+        if "List of apps" in raw:
+            started = True
+            continue
+        if not started:
+            continue
+        m = re.match(r"^ ([*-]) (.+)$", raw)
+        if m:
+            system, rest = m.group(1) == "*", m.group(2).rstrip()
+            parts = rest.rsplit(None, 1)
+            if len(parts) == 2 and _PKG.match(parts[1]):
+                apps.append((parts[0].strip(), parts[1], system))
+                pending = None
+            else:
+                pending = (rest.strip(), system)      # nombre largo: el paquete va en la linea siguiente
+            continue
+        token = raw.strip()
+        if pending and _PKG.match(token):
+            apps.append((pending[0], token, pending[1]))
+            pending = None
+        elif token and not raw.startswith(" "):
+            break                                     # termino la lista
+    return apps
+
+
+def parse_pm_packages(text):
+    """Salida de 'pm list packages' -> [(paquete, paquete, False)]."""
+    pkgs = re.findall(r"^package:(\S+)", text, re.M)
+    return [(p, p, False) for p in sorted(set(pkgs))]
+
+
+def phone_ip(adb, serial):
+    """IP del celular en el Wi-Fi (para adb tcpip), o None."""
+    out = run(adb_cmd(adb, serial, "shell", "ip", "-f", "inet", "addr", "show", "wlan0"), timeout=5)
+    m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", out)
+    if m:
+        return m.group(1)
+    out = run(adb_cmd(adb, serial, "shell", "ip", "route"), timeout=5)
+    for line in out.splitlines():
+        if "wlan" in line:
+            m = re.search(r"src (\d+\.\d+\.\d+\.\d+)", line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def adb_connect(adb, addr):
+    """adb connect ip:puerto -> (ok, salida)."""
+    out = run([adb, "connect", addr], timeout=8).strip()
+    low = out.lower()
+    return ("connected to" in low and "cannot" not in low and "failed" not in low), out
+
+
+def adb_usb_serial(adb, preferred=""):
+    """Serial de un celular conectado por cable (no ip:puerto ni emulador)."""
+    if preferred and ":" not in preferred:
+        return preferred
+    for ln in run([adb, "devices"], timeout=6).splitlines():
+        if ln.endswith("\tdevice"):
+            ser = ln.split("\t")[0]
+            if ":" not in ser and not ser.startswith("emulator-") and "._adb-tls" not in ser:
+                return ser
+    return None
+
+
 # ================================================================ ventanas
 def window_tool_missing():
     """Texto de lo que falta para mover ventanas, o None si se puede."""
@@ -75,6 +158,13 @@ if IS_WINDOWS:
     _u32.IsWindow.argtypes = (W.HWND,)
     _u32.SetWindowPos.argtypes = (W.HWND, W.HWND, ctypes.c_int, ctypes.c_int,
                                   ctypes.c_int, ctypes.c_int, ctypes.c_uint)
+    _u32.GetForegroundWindow.restype = W.HWND
+    _u32.SetForegroundWindow.argtypes = (W.HWND,)
+    _u32.BringWindowToTop.argtypes = (W.HWND,)
+    _u32.AttachThreadInput.argtypes = (W.DWORD, W.DWORD, W.BOOL)
+    _u32.IsIconic.argtypes = (W.HWND,)
+    _u32.ShowWindow.argtypes = (W.HWND, ctypes.c_int)
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
 
     class _DpiUnaware:
@@ -127,6 +217,24 @@ if IS_WINDOWS:
         with _DpiUnaware():
             _u32.SetWindowPos(wid, None, int(x), int(y), int(w), int(h), SWP_NOZORDER | SWP_NOACTIVATE)
 
+    def focus_window(wid):
+        """Trae la ventana al frente con el foco del teclado (Windows no deja si no 'le toca':
+        se pega al hilo de la ventana que tiene el foco mientras tanto)."""
+        if not wid or not _u32.IsWindow(wid):
+            return False
+        fg = _u32.GetForegroundWindow()
+        me = _k32.GetCurrentThreadId()
+        other = _u32.GetWindowThreadProcessId(fg, None) if fg else 0
+        attached = bool(other and other != me and _u32.AttachThreadInput(other, me, True))
+        try:
+            if _u32.IsIconic(wid):
+                _u32.ShowWindow(wid, 9)          # SW_RESTORE
+            _u32.BringWindowToTop(wid)
+            return bool(_u32.SetForegroundWindow(wid))
+        finally:
+            if attached:
+                _u32.AttachThreadInput(other, me, False)
+
 else:
     def _xdotool(*args):
         return run(["xdotool", *args], timeout=2)
@@ -153,3 +261,9 @@ else:
     def set_window_geometry(wid, x, y, w, h):
         _xdotool("windowsize", str(wid), str(int(w)), str(int(h)))
         _xdotool("windowmove", str(wid), str(int(x)), str(int(y)))
+
+    def focus_window(wid):
+        if not wid or not shutil.which("xdotool"):
+            return False
+        _xdotool("windowactivate", str(wid))
+        return True

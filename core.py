@@ -64,6 +64,9 @@ class EngineConfig:
         # modos: Alt + tecla
         self.alt_keys = {k(n) for n in C.MODE_MODIFIERS}
         self.alt_blocks = bool(sp.get("alt_blocks", True))
+        self.chat_key = k(sp["chat"]) if sp.get("chat") else None
+        self.back_key = k(sp["mode_back"]) if sp.get("mode_back") else None
+        self.chat_alt = k("KEY_LEFTALT")     # en el chat solo Alt izq: AltGr + Q escribe @
         self.mode_hotkeys = {}       # tecla -> nombre del modo
         for m in raw.get("modes") or []:
             if m.get("hotkey"):
@@ -179,6 +182,8 @@ class Mapper:
         self.combo_t = {}
         self.combo_fired = set()
         self.consumed = set()         # teclas usadas con Alt: su "soltar" se ignora
+        self.chat = False             # modo chat: el teclado no es control (el mouse si)
+        self.prev_mode = cfg.mode
         self.wheel = {}               # codigo de rueda -> {"down", "until", "left"}
         self.last = {}
         self.last_tick = time.monotonic()
@@ -281,6 +286,9 @@ class Mapper:
 
     def switch_mode(self, name):
         """Cambia de modo sin soltar las teclas que sigues presionando (moverte, correr)."""
+        if self.chat:
+            self.chat = False
+            log("Chat: OFF")
         if self.radial_key is not None:
             self.radial_key = None
             self.radial_out = (0.0, 0.0)
@@ -293,6 +301,31 @@ class Mapper:
         self.update_grab()
         self.push()
         log(f"Modo: {self.cfg.mode}")
+
+    def set_chat(self, on):
+        """Modo chat: el teclado deja de mandar botones/sticks (para escribir); el mouse sigue igual."""
+        if on == self.chat:
+            return
+        cfg = self.cfg
+        if on:
+            self.prev_mode = cfg.mode
+        self.chat = on
+        if on:
+            kb = {c for c in self.pressed if c < e.BTN_MISC and c not in cfg.alt_keys}
+            self.pressed -= kb
+            for d in (self.radial_pending, self.combo_t):
+                for c in [c for c in d if c in kb]:
+                    del d[c]
+            self.combo_fired -= kb
+            if self.radial_key in kb:
+                self.radial_key = None
+                self.radial_out = (0.0, 0.0)
+                self.reset_mouse_motion()
+                self.update_grab()
+        self.push()
+        log("Chat: ON" if on else "Chat: OFF")
+        if not on:
+            log(f"Modo: {cfg.mode}")
 
     def set_mouselook(self, on):
         self.mouselook = on
@@ -397,15 +430,35 @@ class Mapper:
         if ev.value == 0 and ev.code in self.consumed:
             self.consumed.discard(ev.code)
             return
-        if ev.value == 1 and ev.code not in cfg.alt_keys and any(a in self.pressed for a in cfg.alt_keys):
+        alts = (cfg.chat_alt,) if self.chat else cfg.alt_keys
+        if ev.value == 1 and ev.code not in cfg.alt_keys and any(a in self.pressed for a in alts):
+            if ev.code == cfg.chat_key:
+                self.consumed.add(ev.code)
+                self.set_chat(not self.chat)
+                return
+            if ev.code == cfg.back_key:
+                self.consumed.add(ev.code)
+                if self.chat:
+                    self.set_chat(False)
+                    if self.prev_mode != cfg.mode:
+                        self.switch_mode(self.prev_mode)
+                else:
+                    self.switch_mode(cfg.start_mode)
+                return
             name = cfg.mode_hotkeys.get(ev.code)
             if name is not None:
                 self.consumed.add(ev.code)
                 self.switch_mode(name)
                 return
-            if cfg.alt_blocks:
+            if cfg.alt_blocks and not self.chat:
                 self.consumed.add(ev.code)
                 return
+
+        if self.chat and ev.code < e.BTN_MISC:
+            # escribiendo: el teclado no es control; solo se sigue Alt para los atajos
+            if ev.code in cfg.alt_keys:
+                (self.pressed.add if ev.value else self.pressed.discard)(ev.code)
+            return
 
         if ev.code == cfg.mouselook_key:
             if ev.value == 1:

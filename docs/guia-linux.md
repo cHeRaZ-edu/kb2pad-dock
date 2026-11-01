@@ -46,10 +46,10 @@ control.
 
 2. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.5.0-linux.tar.gz` y descomprímelo:
+   `kb2pad-dock-v0.5.1-linux.tar.gz` y descomprímelo:
    ```fish
    mkdir -p ~/Apps
-   tar xzf ~/Descargas/kb2pad-dock-v0.5.0-linux.tar.gz -C ~/Apps
+   tar xzf ~/Descargas/kb2pad-dock-v0.5.1-linux.tar.gz -C ~/Apps
    ```
    O clona el repo:
    ```fish

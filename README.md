@@ -109,8 +109,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.5.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.5.0-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.5.1-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.5.1-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -332,8 +332,10 @@ alta) y el estado térmico de Android; la del CPU se muestra, pero sube a 70–8
   ![HUD vertical y horizontal](docs/img/hud.png)
 
   Los FPS del juego se leen de SurfaceFlinger (los frames que dibuja la app con el foco) cada 2 s; si
-  tu celular no lo permite, se usa el contador de frames de la pantalla. Si sale `--`, tu celular no
-  da ninguno de los dos.
+  tu celular no lo permite, se usa el contador de frames de la pantalla. Si sale `--`, el log dice
+  qué app y qué capa encontró, para revisarlo. Los FPS del video salen de `--print-fps` de scrcpy; en
+  Linux se lee con `stdbuf` (viene en coreutils) y en **Windows no están disponibles**, porque ahí
+  scrcpy junta su salida y los FPS llegarían cada varios minutos.
 - **Icono de temperatura** en la bandeja, con el número y el color del nivel.
 - Todo se ajusta en la pestaña **Temperatura y HUD**.
 

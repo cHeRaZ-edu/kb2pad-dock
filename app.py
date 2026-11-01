@@ -2357,6 +2357,7 @@ class MainWindow(QMainWindow):
         self.fps_timer.timeout.connect(self._fps_poll)
         self._device_info = None
         self._dev_fps, self._dev_last_frame, self._flip_prev = None, None, None
+        self._fps_misses = 0
 
         # Linux: avisar al control si el juego tiene el foco (escudo del teclado)
         self._game_keyboard = "disabled"
@@ -2786,6 +2787,9 @@ class MainWindow(QMainWindow):
         self.game.setProcessEnvironment(env)
         self.append_log("[juego] " + " ".join(cmd))
         self._game_gen += 1
+        if "--print-fps" in cmd and not IS_WINDOWS and shutil.which("stdbuf"):
+            # scrcpy escribe sus mensajes sin vaciar el bufer: por tuberia los FPS saldrian cada ~5 min
+            cmd = ["stdbuf", "-oL", *cmd]
         self.game.start(cmd[0], cmd[1:])
         self.update_status()
 
@@ -3020,6 +3024,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(800, self._update_hud)
             if C.hud_field_on(self.cfg, "device_fps") and not self.fps_timer.isActive():
                 self._dev_fps, self._dev_last_frame, self._flip_prev = None, None, None
+                self._fps_misses = 0
                 self.fps_timer.start()
         elif time.monotonic() > self._hud_test_until:
             self.hud.stop()
@@ -3053,7 +3058,7 @@ class MainWindow(QMainWindow):
 
     def _fps_done(self, *_):
         out = bytes(self.fps_proc.readAllStandardOutput()).decode(errors="replace")
-        last, fps, counter, _layer = PI.parse_fps(out)
+        last, fps, counter, layer = PI.parse_fps(out)
         now = time.monotonic()
         value = None
         if last is not None:                      # tiempos de los frames de la capa del juego
@@ -3064,6 +3069,15 @@ class MainWindow(QMainWindow):
                 value = round((counter - self._flip_prev[0]) / (now - self._flip_prev[1]))
             self._flip_prev = (counter, now)
         self._dev_fps = value
+        if value is None:
+            self._fps_misses += 1
+            if self._fps_misses == 3:             # una vez por juego: para saber que da el celular
+                focus = re.search(r"FOCUS=(.*)", out)
+                self.append_log("[fps] no pude leer los FPS del juego. App con el foco: "
+                                f"'{focus.group(1).strip() if focus else '?'}', capa: '{layer or 'no encontrada'}'. "
+                                "Salida: " + " ".join(out.split())[:400])
+        else:
+            self._fps_misses = 0
         self._update_hud()
 
     # --- armar el HUD ---
@@ -3139,6 +3153,10 @@ class MainWindow(QMainWindow):
                 rows.append([["JUEGO ", "key"], [f"{dev_fps} fps", fps_c(dev_fps)] if dev_fps is not None
                              else ["-- fps", "key"]])
             elif key == "video_fps":
+                if IS_WINDOWS and not sample:
+                    # en Windows scrcpy no vacia su salida por tuberia: los FPS llegarian cada varios minutos
+                    rows.append([["VIDEO ", "key"], ["n/d en Windows", "key"]])
+                    continue
                 row = [["VIDEO ", "key"], [f"{vid_fps} fps", fps_c(vid_fps)] if vid_fps is not None
                        else ["-- fps", "key"]]
                 if skipped:

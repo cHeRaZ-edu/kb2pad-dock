@@ -10,7 +10,11 @@ Datos del celular para el HUD, por adb:
 import re
 
 INFO_SEP = "=====GLES====="
-INFO_CMD = f"getprop; echo {INFO_SEP}; dumpsys SurfaceFlinger | grep -m1 GLES"
+# GPU: la linea GLES de SurfaceFlinger (Android 15+ con Vulkan ya no la trae), el modelo del driver
+# Adreno (kgsl) o Mali, y ro.hardware.egl como ultimo recurso
+INFO_CMD = (f"getprop; echo {INFO_SEP}; dumpsys SurfaceFlinger | grep -m1 GLES; "
+            "echo \"KGSL=$(cat /sys/class/kgsl/kgsl-3d0/gpu_model 2>/dev/null)\"; "
+            "echo \"MALI=$(cat /sys/class/misc/mali0/device/gpuinfo 2>/dev/null | head -n1)\"")
 
 # Nombres comerciales de los chips mas comunes (ro.soc.model). Si no esta, se muestra el codigo.
 SNAPDRAGON = {
@@ -33,8 +37,14 @@ FPS_FLIP = "=====FLIPS====="
 # sh del celular (toybox): app con el foco -> capa SurfaceView de esa app -> sus tiempos de frames
 FPS_SCRIPT = (
     "P=$(dumpsys window | grep -m1 mCurrentFocus | grep -oE '[A-Za-z0-9_.]+/' | head -n1 | tr -d /); "
-    "L=$(dumpsys SurfaceFlinger --list | grep -F \"$P\" | grep -F SurfaceView | grep -v Background | head -n1); "
-    f"echo \"LAYER=$L\"; echo {FPS_LAT}; [ -n \"$L\" ] && dumpsys SurfaceFlinger --latency \"$L\"; "
+    "[ -z \"$P\" ] && P=$(dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' "
+    "| grep -oE '[A-Za-z0-9_.]+/' | head -n1 | tr -d /); "
+    # la capa con frames es la "(BLAST)" de la SurfaceView del juego (la otra solo es el contenedor)
+    "S=$(dumpsys SurfaceFlinger --list | grep -F \"$P\" | grep -v Background); "
+    "L=$(echo \"$S\" | grep -F SurfaceView | grep -F BLAST | head -n1); "
+    "[ -z \"$L\" ] && L=$(echo \"$S\" | grep -F BLAST | head -n1); "
+    "[ -z \"$L\" ] && L=$(echo \"$S\" | grep -F SurfaceView | head -n1); "
+    f"echo \"FOCUS=$P\"; echo \"LAYER=$L\"; echo {FPS_LAT}; [ -n \"$L\" ] && dumpsys SurfaceFlinger --latency \"$L\"; "
     f"echo {FPS_FLIP}; service call SurfaceFlinger 1013"
 )
 _INVALID = (0, 9223372036854775807)
@@ -72,19 +82,28 @@ def phone_name(props):
     return f"{brand.capitalize()} {model}".strip() or "?"
 
 
-def gpu_name(gles_line):
-    """'GLES: Qualcomm, Adreno (TM) 825, OpenGL ES 3.2 ...' -> 'Adreno 825'."""
-    m = re.search(r"GLES:\s*([^,]*),\s*([^,]*)", gles_line or "")
-    if not m:
-        return ""
-    renderer = m.group(2).replace("(TM)", "").replace("(R)", "")
-    return re.sub(r"\s+", " ", renderer).strip()
+def gpu_name(text, props=None):
+    """GPU a partir de (en orden): 'GLES: Qualcomm, Adreno (TM) 825, ...', 'KGSL=Adreno825v2',
+    'MALI=Mali-G715 ...' o ro.hardware.egl."""
+    text = text or ""
+    m = re.search(r"GLES:\s*([^,\n]*),\s*([^,\n]*)", text)
+    if m:
+        renderer = m.group(2).replace("(TM)", "").replace("(R)", "")
+        return re.sub(r"\s+", " ", renderer).strip()
+    m = re.search(r"KGSL=\s*Adreno\s*(\d+)", text, re.I)
+    if m:
+        return f"Adreno {m.group(1)}"
+    m = re.search(r"MALI=\s*(Mali-[\w-]+)", text, re.I)
+    if m:
+        return m.group(1)
+    egl = ((props or {}).get("ro.hardware.egl") or "").strip()
+    return {"adreno": "Adreno", "mali": "Mali", "powervr": "PowerVR"}.get(egl.lower(), egl.capitalize())
 
 
 def parse_info(text):
     props_text, _, gles = (text or "").partition(INFO_SEP)
     props = _props(props_text)
-    return {"phone": phone_name(props), "soc": soc_name(props), "gpu": gpu_name(gles),
+    return {"phone": phone_name(props), "soc": soc_name(props), "gpu": gpu_name(gles, props),
             "model": (props.get("ro.product.model") or "").strip()}
 
 

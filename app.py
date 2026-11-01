@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 import config as C
 import icons
 import platform_tools as PT
+import thermal as T
 from keycodes import win_scan_to_code
 
 IS_WINDOWS = os.name == "nt"
@@ -737,6 +738,18 @@ class SticksTab(QWidget):
         form.addRow(hint)
         lay.addWidget(box)
 
+        box = QGroupBox("Perfil de video")
+        form = QFormLayout(box)
+        self.profile_toggle = KeyField(allow_empty=True)
+        self.profile_toggle.changed.connect(self.changed.emit)
+        form.addRow("Cambiar de perfil:  Alt +", self.profile_toggle)
+        hint = QLabel("Alterna entre los dos perfiles de video que eliges en la pestaña Juego (por ejemplo, Mejor "
+                      "calidad para explorar y Maximo rendimiento para pelear). La ventana del juego se reabre.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray;")
+        form.addRow(hint)
+        lay.addWidget(box)
+
         box = QGroupBox("Modos y mouse")
         form = QFormLayout(box)
         self.alt_blocks = QCheckBox("Con Alt presionado no mandar nada al juego "
@@ -765,6 +778,7 @@ class SticksTab(QWidget):
         self.mode_back.set_value(sp.get("mode_back", ""))
         self.chat_window.setChecked(bool(sp.get("chat_window", True)))
         self.chat_keyboard.setCurrentIndex(max(0, self.chat_keyboard.findData(sp.get("chat_keyboard", "uhid"))))
+        self.profile_toggle.set_value(sp.get("profile_toggle", ""))
 
     def store(self, cfg):
         for key, fs in self.fields.items():
@@ -777,6 +791,7 @@ class SticksTab(QWidget):
         cfg["special"]["mode_back"] = self.mode_back.value()
         cfg["special"]["chat_window"] = self.chat_window.isChecked()
         cfg["special"]["chat_keyboard"] = self.chat_keyboard.currentData() or "uhid"
+        cfg["special"]["profile_toggle"] = self.profile_toggle.value()
 
 
 def _dspin(lo, hi, step, decimals=2, suffix=""):
@@ -954,6 +969,29 @@ class ScrcpyTab(QWidget):
         self.max_size = _ispin(0, 8192, 64, " px")
         self.max_size.setSpecialValueText("Original")
         self.no_audio = QCheckBox("Sin audio en la PC (el sonido sale por el celular)")
+        self.profile = QComboBox()
+        self.profile.addItem("Personalizado", "")
+        for key, (label, _desc, _vals) in C.PROFILES.items():
+            self.profile.addItem(label + ("  ⚠" if key in C.PROFILE_RISKY else ""), key)
+        self.profile.activated.connect(self._profile_chosen)
+        self.profile_desc = self._hint("")
+        self.profile_a = QComboBox()
+        self.profile_b = QComboBox()
+        for combo in (self.profile_a, self.profile_b):
+            for key, (label, _d, _v) in C.PROFILES.items():
+                combo.addItem(label, key)
+            combo.currentIndexChanged.connect(self._changed)
+        form.addRow("Perfil de video:", self.profile)
+        form.addRow("", self.profile_desc)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("El atajo (Alt + P) alterna entre"))
+        row.addWidget(self.profile_a)
+        row.addWidget(QLabel("y"))
+        row.addWidget(self.profile_b)
+        row.addStretch()
+        form.addRow("", row)
+        form.addRow("", self._hint("Al cambiar de perfil con el juego abierto, la ventana se reabre (2-3 s en negro; "
+                                   "el juego sigue en el celular)."))
         form.addRow("Codec:", self.codec)
         row = QHBoxLayout()
         row.addWidget(self.encoder, 1)
@@ -1088,6 +1126,7 @@ class ScrcpyTab(QWidget):
         self.no_audio.toggled.connect(self._changed)
         self.lowlat.toggled.connect(self._changed)
         self.lowlat.toggled.connect(self._sync)
+        self.lowlat.clicked.connect(self._lowlat_clicked)
         self.encoder.currentIndexChanged.connect(self._changed)
         self.encoder.currentIndexChanged.connect(self._remember_encoder)
         self._enc_choice = {}
@@ -1134,6 +1173,8 @@ class ScrcpyTab(QWidget):
 
     def _changed(self, *_):
         self._update_preview()
+        if hasattr(self, "profile"):
+            self._sync_profile()
         self.changed.emit()
 
     def values(self):
@@ -1167,6 +1208,8 @@ class ScrcpyTab(QWidget):
             **{k: chk.isChecked() for k, chk in self.lowlat_checks.items()},
             "soc": self._soc[1] if self._soc else "",
             "soc_vendor": self._soc[0] if self._soc else "",
+            "profile_a": self.profile_a.currentData() or "calidad",
+            "profile_b": self.profile_b.currentData() or "maximo",
         }
 
     # ---------- codificador ----------
@@ -1280,16 +1323,9 @@ class ScrcpyTab(QWidget):
         enc = self._encoder_value()[0]
         if enc.startswith("c2.android"):
             lines.append(f"• Codificador: Automatico (ahora es {enc}, que es por software)")
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setWindowTitle("Bajar latencia")
-        msg.setText(f"Chip: {self._soc[1]}\n\nSe va a activar:\n" + "\n".join(lines))
-        msg.setInformativeText("Advertencias:\n" + "\n".join(warns) +
-                               "\n\nSe aplica al abrir el juego. Si scrcpy no abre o la imagen se ve mal, "
-                               "pulsa 'Quitar optimizaciones'.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        msg.button(QMessageBox.StandardButton.Ok).setText("Aplicar")
-        if msg.exec() != QMessageBox.StandardButton.Ok:
+        lines = [f"Chip: {self._soc[1]}"] + [ln[2:] for ln in lines]
+        if not confirm_risky(self, "Bajar latencia", lines, [w[2:] for w in warns] or
+                             ["Se aplica al abrir el juego."]):
             return
         self.lowlat.setChecked(True)
         for key, on in rec.items():
@@ -1299,6 +1335,71 @@ class ScrcpyTab(QWidget):
         if enc.startswith("c2.android"):
             self.encoder.setCurrentIndex(0)
         self.log.emit("Bajar latencia: opciones marcadas; guarda y vuelve a abrir el juego")
+
+    def _lowlat_clicked(self, on):
+        """Activarla a mano tambien pide la advertencia (una vez por sesion)."""
+        if on and not confirm_risky(self, "Optimizacion del codificador", [],
+                                    [w for _v, _l, w in C.LOWLAT_OPTIONS.values()]):
+            self.lowlat.setChecked(False)
+
+    # ---------- perfiles ----------
+    def _set_fields(self, vals):
+        if "codec" in vals:
+            self.codec.setCurrentText(vals["codec"])
+        if "bitrate" in vals:
+            self.bitrate.setText(str(vals["bitrate"]))
+        if "max_size" in vals:
+            self.max_size.setValue(int(vals["max_size"]))
+        if "encoder" in vals:
+            codec = vals.get("encoder_codec") or self.codec.currentText()
+            self._enc_choice[codec] = vals["encoder"]
+            self._fill_encoders()
+        if "lowlat_enabled" in vals:
+            self.lowlat.setChecked(bool(vals["lowlat_enabled"]))
+        for k, chk in self.lowlat_checks.items():
+            if k in vals:
+                chk.setChecked(bool(vals[k]))
+
+    def apply_profile(self, name, ask=True):
+        """Pone los valores del perfil. Para Maximo rendimiento pide la advertencia. True si se aplico."""
+        if name not in C.PROFILES:
+            return False
+        vals = C.profile_settings(name, self.values(), self._version(), self.encoders)
+        if name in C.PROFILE_RISKY and ask:
+            if not self._soc:
+                self.detect_soc(quiet=True)
+                vals = C.profile_settings(name, self.values(), self._version(), self.encoders)
+            label, desc, _ = C.PROFILES[name]
+            changes = [f"Perfil {label}: {vals['codec']}, {vals['max_size'] or 'resolucion original'} px, {vals['bitrate']}"]
+            if vals.get("encoder"):
+                changes.append(f"Codificador de hardware {vals['encoder']}")
+            warns = []
+            for key, (values, lab, warning) in C.LOWLAT_OPTIONS.items():
+                if vals.get(key):
+                    changes.append(f"{lab}" + ("" if values[0] in lab else f"  ({', '.join(values)})"))
+                    warns.append(f"{lab}: {warning}")
+            chip = self._soc[1] if self._soc else "sin detectar (solo las opciones comunes)"
+            changes.append(f"Chip: {chip}")
+            if not confirm_risky(self, label, changes, warns or [desc]):
+                return False
+        self._set_fields(vals)
+        return True
+
+    def _profile_chosen(self, _index):
+        name = self.profile.currentData()
+        if name and not self.apply_profile(name):
+            self._sync_profile()
+            return
+        self._sync_profile()
+
+    def _sync_profile(self):
+        """El combo de perfil sigue a los campos: si no coinciden con ninguno, 'Personalizado'."""
+        name = C.current_profile(self.values())
+        self.profile.blockSignals(True)
+        self.profile.setCurrentIndex(max(0, self.profile.findData(name)))
+        self.profile.blockSignals(False)
+        self.profile_desc.setText(C.PROFILES[name][1] if name else
+                                  "Tus propios valores. Elige un perfil para llenarlos de un jalon.")
 
     def clear_lowlat(self):
         for chk in self.lowlat_checks.values():
@@ -1353,12 +1454,15 @@ class ScrcpyTab(QWidget):
         for k, chk in self.lowlat_checks.items():
             chk.setChecked(bool(sc.get(k)))
         self._soc = (sc.get("soc_vendor", ""), sc.get("soc", "")) if sc.get("soc") else None
+        self.profile_a.setCurrentIndex(max(0, self.profile_a.findData(sc.get("profile_a", "calidad"))))
+        self.profile_b.setCurrentIndex(max(0, self.profile_b.findData(sc.get("profile_b", "maximo"))))
         self.soc_label.setText(sc.get("soc") or "sin detectar (pulsa Detectar con el celular conectado)")
         ver = self._version()
         self.version_label.setText(f"{ver[0]}.{ver[1]}" + ("  (ya trae tiempo real)" if ver >= (4, 0) else "")
                                    if ver else "no encontrado")
         self._sync()
         self._update_preview()
+        self._sync_profile()
 
     def store(self, cfg):
         cfg["scrcpy"] = self.values()
@@ -1784,6 +1888,244 @@ class CursorBlanker(QWidget):
             self.raise_()
 
 
+FPS_LINE = re.compile(r"(\d+) fps(?: \(\+(\d+) frames? skipped\))?\s*$")
+
+
+# ================================================================ seguridad (opciones que calientan)
+SESSION = {"safety_ok": False}       # la advertencia se acepta una vez por sesion de la app
+SAFETY_SECONDS = 8
+
+
+class SafetyDialog(QDialog):
+    """Advertencia antes de activar opciones que exigen mas al celular. El boton Aceptar se habilita
+    despues de unos segundos para que dé tiempo de leerla."""
+
+    def __init__(self, title, changes, warnings, parent=None, wait=SAFETY_SECONDS):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+        head = QLabel("⚠  Esto hace trabajar mas al celular y puede calentarlo")
+        head.setStyleSheet("font-weight: bold; font-size: 14px; color: #c9a227;")
+        lay.addWidget(head)
+        body = QLabel()
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.TextFormat.PlainText)
+        text = ""
+        if changes:
+            text += "Se va a activar:\n" + "\n".join(f"• {c}" for c in changes) + "\n\n"
+        text += "Advertencias:\n" + "\n".join(f"• {w}" for w in warnings)
+        text += ("\n\n• Un celular caliente baja su rendimiento solo (se siente como tirones) y el calor "
+                 "constante desgasta la bateria.\n• kb2pad vigila la temperatura mientras juegas y te avisa; "
+                 "si llega a peligro hace lo que elegiste en 'Temperatura y HUD'.\n• Si ves la imagen mal o el "
+                 "celular muy caliente, cambia a otro perfil o pulsa 'Quitar optimizaciones'.")
+        body.setText(text)
+        body.setContentsMargins(4, 4, 8, 4)
+        body.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.Shape.NoFrame)
+        area.setWidget(body)
+        area.setMinimumHeight(340)
+        lay.addWidget(area, 1)
+        self.resize(620, 470)
+        self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok = self.bb.button(QDialogButtonBox.StandardButton.Ok)
+        self.bb.accepted.connect(self.accept)
+        self.bb.rejected.connect(self.reject)
+        lay.addWidget(self.bb)
+        self.left = wait
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self._tick)
+        self._tick(first=True)
+        if wait > 0:
+            self.timer.start()
+
+    def _tick(self, first=False):
+        if not first:
+            self.left -= 1
+        if self.left > 0:
+            self.ok.setEnabled(False)
+            self.ok.setText(f"Entiendo ({self.left})")
+        else:
+            self.timer.stop()
+            self.ok.setEnabled(True)
+            self.ok.setText("Entiendo, activar")
+
+
+def confirm_risky(parent, title, changes, warnings):
+    """True si el usuario acepta. La cuenta regresiva solo la primera vez en la sesion."""
+    dlg = SafetyDialog(title, changes, warnings, parent, wait=0 if SESSION["safety_ok"] else SAFETY_SECONDS)
+    if dlg.exec():
+        SESSION["safety_ok"] = True
+        return True
+    return False
+
+
+# ================================================================ HUD (proceso aparte)
+class HudClient:
+    """Lanza el HUD (app.py --hud / kb2pad.exe --hud) y le manda lineas JSON."""
+
+    def __init__(self, parent, log):
+        self.log = log
+        self.proc = QProcess(parent)
+        self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.proc.readyReadStandardOutput.connect(self._out)
+        self.proc.finished.connect(self._finished)
+        no_console(self.proc)
+        self.last = None
+        self.wanted = False
+
+    def running(self):
+        return self.proc.state() != QProcess.ProcessState.NotRunning
+
+    def start(self):
+        self.wanted = True
+        if self.running():
+            return
+        args = ([] if FROZEN else ["-u", str(HERE / "app.py")]) + ["--hud"]
+        env = QProcessEnvironment.systemEnvironment()
+        if C.wayland_session():
+            env.insert("QT_QPA_PLATFORM", "xcb")     # en Wayland una ventana no puede ir encima de otra; en X11 si
+        self.proc.setProcessEnvironment(env)
+        self.last = None
+        self.proc.start(sys.executable, args)
+
+    def send(self, msg):
+        if not self.running():
+            return
+        data = json.dumps(msg, ensure_ascii=False)
+        if data == self.last:
+            return
+        self.last = data
+        self.proc.write((data + "\n").encode("utf-8"))
+
+    def stop(self):
+        self.wanted = False
+        if self.running():
+            self.proc.closeWriteChannel()
+            QTimer.singleShot(1500, lambda: self.running() and self.proc.kill())
+
+    def _out(self):
+        data = bytes(self.proc.readAllStandardOutput()).decode(errors="replace").strip()
+        if data:
+            self.log(f"[hud] {data[-300:]}")
+
+    def _finished(self, code, _status):
+        if self.wanted and code != 0:
+            self.log(f"[hud] no pudo abrirse (codigo {code})" + (
+                "; en Wayland necesita las librerias de X11 de Qt (paquete xcb-util-cursor)" if C.wayland_session()
+                else "") + ". La temperatura sigue en la bandeja y en la barra de la app.")
+        self.wanted = False
+
+
+# ================================================================ pestaña temperatura y HUD
+class ThermalTab(QWidget):
+    changed = pyqtSignal()
+    test_hud = pyqtSignal()
+    ACTIONS = {"stream": "Cerrar la transmision (scrcpy)",
+               "stream_game": "Cerrar la transmision y el juego (puedes perder lo no guardado)",
+               "notify": "Solo avisar"}
+    CORNERS = {"tl": "Arriba a la izquierda", "tr": "Arriba a la derecha",
+               "bl": "Abajo a la izquierda", "br": "Abajo a la derecha"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+
+        box = QGroupBox("Temperatura del celular")
+        form = QFormLayout(box)
+        self.enabled = QCheckBox("Revisar la temperatura mientras el juego esta abierto (con adb, cada pocos segundos)")
+        self.interval = _ispin(2, 60, 1, " s")
+        self.warn = _dspin(30, 80, 0.5, 1, " °C")
+        self.critical = _dspin(30, 80, 0.5, 1, " °C")
+        self.danger = _dspin(30, 90, 0.5, 1, " °C")
+        self.action = QComboBox()
+        for k, label in self.ACTIONS.items():
+            self.action.addItem(label, k)
+        self.notify = QCheckBox("Notificacion del sistema solo al llegar a critico y a peligro")
+        self.tray_icon = QCheckBox("Icono con la temperatura en la bandeja del sistema")
+        form.addRow(self.enabled)
+        form.addRow("Revisar cada:", self.interval)
+        form.addRow("Aviso:", self.warn)
+        form.addRow("", self._hint("El HUD, la barra de la app y el icono de la bandeja se ponen amarillos."))
+        form.addRow("Critico:", self.critical)
+        form.addRow("", self._hint("Naranja + una notificacion del sistema (se repite cada 10 min como maximo)."))
+        form.addRow("Peligro:", self.danger)
+        form.addRow("Al llegar a peligro:", self.action)
+        form.addRow("", self._hint("Rojo + notificacion de peligro. La accion se hace si sigue en peligro dos "
+                                   "lecturas seguidas (para no reaccionar a un pico)."))
+        form.addRow(self.notify)
+        form.addRow(self.tray_icon)
+        form.addRow("", self._hint(
+            "Cuenta la temperatura de la piel o de la bateria del celular (la mas alta). La del CPU sube a 70-80 °C "
+            "en juegos y es normal: se muestra pero no dispara avisos. Tambien cuenta el estado termico de Android "
+            "(moderado = aviso, severo = critico, critico o mas = peligro). Lo que mas calienta es el juego: bajar "
+            "sus FPS en sus ajustes ayuda mas que bajar la calidad del video."))
+        self.reading = QLabel("Sin lecturas todavia (empiezan al abrir el juego).")
+        self.reading.setWordWrap(True)
+        form.addRow("Ultima lectura:", self.reading)
+        lay.addWidget(box)
+
+        box = QGroupBox("HUD sobre el juego")
+        form = QFormLayout(box)
+        self.hud = QCheckBox("Mostrar un cuadro con temperatura, bateria, FPS, perfil y modo encima del juego")
+        self.corner = QComboBox()
+        for k, label in self.CORNERS.items():
+            self.corner.addItem(label, k)
+        self.show_fps = QCheckBox("Mostrar los FPS del video que llegan a la PC")
+        b_test = QPushButton("Probar HUD (5 s)")
+        b_test.clicked.connect(self.test_hud.emit)
+        form.addRow(self.hud)
+        form.addRow("Esquina:", self.corner)
+        form.addRow(self.show_fps)
+        form.addRow("", b_test)
+        form.addRow("", self._hint("No recibe clics ni toma el foco. En Linux con Wayland usa X11 (XWayland) para "
+                                   "poder ir encima de la ventana del juego. Tambien se activa o apaga desde el "
+                                   "menu del icono de la bandeja."))
+        lay.addWidget(box)
+        lay.addStretch()
+
+        for w in (self.enabled, self.notify, self.tray_icon, self.hud, self.show_fps):
+            w.toggled.connect(self.changed.emit)
+        for w in (self.interval, self.warn, self.critical, self.danger):
+            w.valueChanged.connect(self.changed.emit)
+        for w in (self.action, self.corner):
+            w.currentIndexChanged.connect(self.changed.emit)
+
+    @staticmethod
+    def _hint(text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: gray;")
+        lbl.setWordWrap(True)
+        return lbl
+
+    def load(self, cfg):
+        th, hud = cfg["thermal"], cfg["hud"]
+        self.enabled.setChecked(bool(th.get("enabled", True)))
+        self.interval.setValue(int(th.get("interval", 5)))
+        self.warn.setValue(float(th.get("warn", 42)))
+        self.critical.setValue(float(th.get("critical", 46)))
+        self.danger.setValue(float(th.get("danger", 50)))
+        self.action.setCurrentIndex(max(0, self.action.findData(th.get("danger_action", "stream"))))
+        self.notify.setChecked(bool(th.get("notify", True)))
+        self.tray_icon.setChecked(bool(th.get("tray_icon", True)))
+        self.hud.setChecked(bool(hud.get("enabled", True)))
+        self.corner.setCurrentIndex(max(0, self.corner.findData(hud.get("corner", "tl"))))
+        self.show_fps.setChecked(bool(hud.get("show_fps", True)))
+
+    def store(self, cfg):
+        cfg["thermal"] = {
+            "enabled": self.enabled.isChecked(), "interval": self.interval.value(),
+            "warn": self.warn.value(), "critical": self.critical.value(), "danger": self.danger.value(),
+            "danger_action": self.action.currentData() or "stream",
+            "notify": self.notify.isChecked(), "tray_icon": self.tray_icon.isChecked(),
+        }
+        cfg["hud"] = {"enabled": self.hud.isChecked(), "corner": self.corner.currentData() or "tl",
+                      "show_fps": self.show_fps.isChecked()}
+
+
 # ================================================================ ventana principal
 class MainWindow(QMainWindow):
     def __init__(self, path):
@@ -1818,8 +2160,10 @@ class MainWindow(QMainWindow):
         self.chk_debug.toggled.connect(self.toggle_debug)
         self.lbl_mode_icon = QLabel()
         self.lbl_mode = QLabel()
+        self.lbl_phone = QLabel()
+        self.lbl_phone.setToolTip("Temperatura y bateria del celular (mientras el juego esta abierto)")
         for w in (self.btn_engine, self.lbl_engine, self.btn_game, self.lbl_game, self.btn_all,
-                  self.lbl_mode_icon, self.lbl_mode):
+                  self.lbl_mode_icon, self.lbl_mode, self.lbl_phone):
             bar.addWidget(w)
         bar.addStretch()
         bar.addWidget(self.chk_debug)
@@ -1843,6 +2187,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(scrolled(self.t_sticks), "Sticks y teclas especiales")
         self.tabs.addTab(scrolled(self.t_mouse), "Mouse y radial")
         self.tabs.addTab(scrolled(self.t_scrcpy), "Juego (scrcpy)")
+        self.t_thermal = ThermalTab()
+        self.tabs.addTab(scrolled(self.t_thermal), "Temperatura y HUD")
+        self.t_thermal.changed.connect(self.mark_dirty)
+        self.t_thermal.test_hud.connect(self.test_hud)
         for t in (self.t_bind, self.t_sticks, self.t_mouse, self.t_scrcpy):
             t.changed.connect(self.mark_dirty)
         self.t_scrcpy.log.connect(self.append_log)
@@ -1906,7 +2254,27 @@ class MainWindow(QMainWindow):
         self.game.started.connect(self._on_game_started)
         no_console(self.engine)
         no_console(self.game)
-        self.game.finished.connect(lambda *_: self.geo_timer.stop())
+        self.game.finished.connect(self._game_finished)
+        self._restart_video = False
+        self._game_gen = 0
+
+        # temperatura del celular, HUD y FPS del video
+        self.thermal_proc = QProcess(self)
+        self.thermal_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.thermal_proc.finished.connect(self._thermal_done)
+        no_console(self.thermal_proc)
+        self.thermal_timer = QTimer(self)
+        self.thermal_timer.timeout.connect(self._thermal_poll)
+        self._thermal_info = None
+        self._thermal_level = T.OK
+        self._thermal_reason = ""
+        self._danger_hits = 0
+        self._danger_done = False
+        self._last_crit_notify = -1e9
+        self._video_fps = None
+        self._fps_skipped = 0
+        self._hud_test_until = 0.0
+        self.hud = HudClient(self, self.append_log)
 
         # Linux: avisar al control si el juego tiene el foco (escudo del teclado)
         self._game_keyboard = "disabled"
@@ -1945,8 +2313,21 @@ class MainWindow(QMainWindow):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(icon, self)
             self.tray.setToolTip(C.APP_NAME)
-            self.tray.activated.connect(lambda *_: (self.showNormal(), self.activateWindow()))
+            self.tray.activated.connect(self._tray_activated)
+            menu = QMenu(self)
+            act = menu.addAction("Mostrar kb2pad")
+            act.triggered.connect(lambda: (self.showNormal(), self.activateWindow()))
+            self.act_hud = menu.addAction("HUD sobre el juego")
+            self.act_hud.setCheckable(True)
+            self.act_hud.triggered.connect(self._tray_toggle_hud)
+            menu.addSeparator()
+            act = menu.addAction("Salir")
+            act.triggered.connect(self.close)
+            self.tray.setContextMenu(menu)
             self.tray.show()
+        self.temp_tray = QSystemTrayIcon(self) if self.tray else None
+        if self.temp_tray:
+            self.temp_tray.activated.connect(self._tray_activated)
         self._update_tray()
 
         self.load_into_ui()
@@ -1976,6 +2357,9 @@ class MainWindow(QMainWindow):
         self.t_sticks.load(self.cfg)
         self.t_mouse.load(self.cfg)
         self.t_scrcpy.load(self.cfg)
+        self.t_thermal.load(self.cfg)
+        if self.tray:
+            self.act_hud.setChecked(bool(self.cfg["hud"].get("enabled", True)))
         self._loading = False
         self.set_dirty(False)
 
@@ -1983,6 +2367,7 @@ class MainWindow(QMainWindow):
         self.t_sticks.store(self.cfg)
         self.t_mouse.store(self.cfg)
         self.t_scrcpy.store(self.cfg)
+        self.t_thermal.store(self.cfg)
         self.t_bind.store(self.cfg)
         return self.cfg
 
@@ -2064,6 +2449,13 @@ class MainWindow(QMainWindow):
         data = bytes(proc.readAllStandardOutput()).decode(errors="replace")
         for line in data.splitlines():
             if line.strip():
+                if tag == "juego":
+                    m = FPS_LINE.search(line)
+                    if m:                          # --print-fps: va al HUD, no al log
+                        self._video_fps = int(m.group(1))
+                        self._fps_skipped = int(m.group(2) or 0)
+                        self._update_hud()
+                        continue
                 self.append_log(f"[{tag}] {line}")
                 if tag == "control":
                     self._engine_line(line.strip())
@@ -2087,6 +2479,8 @@ class MainWindow(QMainWindow):
         elif line == "PAUSADO":
             self._paused = True
             self._update_tray()
+        elif line == "Perfil: alternar":
+            self.toggle_profile()
 
     def _mode_changed(self, name):
         self._mode_name = name
@@ -2113,6 +2507,8 @@ class MainWindow(QMainWindow):
         if self.tray:
             self.tray.setIcon(icon)
             self.tray.setToolTip(f"{C.APP_NAME} - {text}")
+        if hasattr(self, "hud"):
+            self._update_hud()
 
     def _game_screen(self):
         sc = self.cfg["scrcpy"]
@@ -2209,7 +2605,7 @@ class MainWindow(QMainWindow):
             self.update_status()
         elif self.game_running():
             self.game.terminate()
-            QTimer.singleShot(3000, lambda: self.game_running() and self.game.kill())
+            self._kill_game_later()
         else:
             self.start_game()
 
@@ -2299,12 +2695,15 @@ class MainWindow(QMainWindow):
             self.append_log("[juego] sin teclado para el chat: instala xdotool para que kb2pad sepa cuando "
                             "el juego tiene el foco")
         self.geo_wid = None
-        cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")), self._game_keyboard)
+        hud = self.cfg["hud"]
+        cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")), self._game_keyboard,
+                                 print_fps=bool(hud.get("enabled", True) and hud.get("show_fps", True)))
         env = QProcessEnvironment.systemEnvironment()
         for k, v in C.scrcpy_env_overrides(sc, self._game_keyboard).items():
             env.insert(k, v)
         self.game.setProcessEnvironment(env)
         self.append_log("[juego] " + " ".join(cmd))
+        self._game_gen += 1
         self.game.start(cmd[0], cmd[1:])
         self.update_status()
 
@@ -2319,6 +2718,8 @@ class MainWindow(QMainWindow):
 
     def _on_game_started(self):
         sc = self.cfg["scrcpy"]
+        self._thermal_start()
+        self._apply_hud_state()
         if sc.get("rotate_fit", "screen") == "off":
             return
         missing = PT.window_tool_missing()
@@ -2410,6 +2811,224 @@ class MainWindow(QMainWindow):
         self.append_log("[chat] abriendo Ajustes > Teclado fisico en el celular: elige 'scrcpy' y el idioma "
                         "de tu teclado (ej. Español (Latinoamerica))")
 
+    # ---------- bandeja ----------
+    def _tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.showNormal()
+            self.activateWindow()
+
+    def _tray_toggle_hud(self, on):
+        self.t_thermal.hud.setChecked(on)
+        self.cfg["hud"]["enabled"] = on
+        if not self.dirty or self.save(quiet=True):
+            pass
+        self._apply_hud_state()
+
+    def _notify(self, title, body, danger=False):
+        self.append_log(f"[temperatura] {title}: {body}")
+        if not self.cfg["thermal"].get("notify", True):
+            return
+        if self.tray:
+            icon = QSystemTrayIcon.MessageIcon.Critical if danger else QSystemTrayIcon.MessageIcon.Warning
+            self.tray.showMessage(title, body, icon, 20000 if danger else 12000)
+        elif danger:
+            box = QMessageBox(QMessageBox.Icon.Critical, title, body, QMessageBox.StandardButton.Ok, self)
+            box.setModal(False)
+            box.show()
+
+    # ---------- temperatura ----------
+    def _thermal_start(self):
+        th = self.cfg["thermal"]
+        if not th.get("enabled", True):
+            return
+        if not self.thermal_timer.isActive():
+            self._thermal_info, self._thermal_level, self._thermal_reason = None, T.OK, ""
+            self._danger_hits, self._danger_done = 0, False
+        self.thermal_timer.setInterval(max(2, int(th.get("interval", 5))) * 1000)
+        self.thermal_timer.start()
+        QTimer.singleShot(1500, self._thermal_poll)
+
+    def _thermal_stop(self):
+        self.thermal_timer.stop()
+        self._thermal_info, self._thermal_level, self._thermal_reason = None, T.OK, ""
+        self._update_thermal_ui()
+
+    def _thermal_poll(self):
+        if self.thermal_proc.state() != QProcess.ProcessState.NotRunning or not self.game_running():
+            return
+        sc = self.cfg["scrcpy"]
+        if not C.tool_exists(sc, "adb"):
+            return
+        cmd = PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", T.SHELL_CMD)
+        self.thermal_proc.start(cmd[0], cmd[1:])
+
+    def _thermal_done(self, *_):
+        out = bytes(self.thermal_proc.readAllStandardOutput()).decode(errors="replace")
+        info = T.parse(out)
+        if not info["temps"] and info["status"] is None:
+            return
+        th = self.cfg["thermal"]
+        prev = self._thermal_level
+        level, reason = T.classify(info, float(th.get("warn", 42)), float(th.get("critical", 46)),
+                                   float(th.get("danger", 50)), prev)
+        self._thermal_info, self._thermal_level, self._thermal_reason = info, level, reason
+        if level >= T.CRITICAL and prev < T.CRITICAL and time.monotonic() - self._last_crit_notify > 600:
+            self._last_crit_notify = time.monotonic()
+            if level == T.CRITICAL:
+                self._notify("Celular caliente", f"{reason}. Baja los FPS del juego o el perfil de video, o deja "
+                             "descansar el celular.")
+        if level == T.DANGER:
+            self._danger_hits += 1
+        else:
+            self._danger_hits = 0
+            if level < T.CRITICAL:
+                self._danger_done = False
+        if level == T.DANGER and self._danger_hits >= 2 and not self._danger_done:
+            self._danger_action(reason)
+        self._update_thermal_ui()
+
+    def _danger_action(self, reason):
+        self._danger_done = True
+        th, sc = self.cfg["thermal"], self.cfg["scrcpy"]
+        act = th.get("danger_action", "stream")
+        body = f"{reason}."
+        if act in ("stream", "stream_game") and self.game_running():
+            self._restart_video = False
+            self.game.terminate()
+            body += " Cerre la transmision"
+            if act == "stream_game" and sc.get("package") and C.tool_exists(sc, "adb"):
+                PT.spawn(PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", "am", "force-stop",
+                                    sc["package"]))
+                body += " y el juego"
+            body += ". Deja que el celular se enfrie antes de seguir."
+        else:
+            body += " Deja descansar el celular o baja los FPS del juego."
+        self._notify("PELIGRO: el celular esta muy caliente", body, danger=True)
+
+    def _update_thermal_ui(self):
+        info, level = self._thermal_info, self._thermal_level
+        colors = ["#3c9a3c", "#c9a227", "#e0701c", "#d63a3a"]
+        m = T.metric(info) if info else None
+        if info:
+            text = f"📱 {m[0]:.0f} °C" if m else "📱 ?"
+            if info["battery_level"] is not None:
+                text += f" · {info['battery_level']}%" + (" ⚡" if info["charging"] else "")
+            self.lbl_phone.setText(text)
+            self.lbl_phone.setStyleSheet(f"color: {colors[level]}; font-weight: bold;")
+            parts = [f"{k} {v:.1f} °C" for k, v in sorted(info["temps"].items())]
+            self.t_thermal.reading.setText(", ".join(parts) + f"; estado de Android: {T.status_name(info['status'])}"
+                                           + (f"; {T.LEVELS[level]}: {self._thermal_reason}" if level else ""))
+        else:
+            self.lbl_phone.setText("")
+        if self.temp_tray:
+            if info and m and self.cfg["thermal"].get("tray_icon", True):
+                self.temp_tray.setIcon(icons.temp_icon(m[0], level))
+                self.temp_tray.setToolTip(f"Celular {m[0]:.1f} °C ({m[1]})"
+                                          + (f" - {T.LEVELS[level]}" if level else ""))
+                self.temp_tray.show()
+            else:
+                self.temp_tray.hide()
+        self._update_hud()
+
+    # ---------- HUD ----------
+    def _apply_hud_state(self):
+        if self.cfg["hud"].get("enabled", True) and self.game_running():
+            self.hud.start()
+            QTimer.singleShot(800, self._update_hud)
+        elif time.monotonic() > self._hud_test_until:
+            self.hud.stop()
+
+    def _hud_lines(self):
+        info = self._thermal_info
+        lines = []
+        if info:
+            m = T.metric(info)
+            head = f"CEL {m[0]:.1f}°C" if m else "CEL --"
+            if info["status"] is not None:
+                head += f"  {T.status_name(info['status'])}"
+            lines.append(head)
+            parts = [f"{lab} {info['temps'][k]:.0f}°" for k, lab in (("cpu", "CPU"), ("gpu", "GPU"), ("bateria", "BAT"))
+                     if k in info["temps"]]
+            if parts:
+                lines.append("  ".join(parts))
+            if info["battery_level"] is not None:
+                lines.append(f"BATERIA {info['battery_level']}%" + ("  cargando" if info["charging"] else ""))
+        elif self.cfg["thermal"].get("enabled", True):
+            lines.append("CEL leyendo...")
+        if self.cfg["hud"].get("show_fps", True) and self._video_fps is not None:
+            lines.append(f"VIDEO {self._video_fps} fps" + (f"  ({self._fps_skipped} saltados)" if self._fps_skipped else ""))
+        prof = C.current_profile(self.cfg["scrcpy"])
+        mode = ("Chat" if self._chat else self._mode_name or "control") if self._connected else "control detenido"
+        lines.append(f"{C.PROFILES[prof][0] if prof else 'Personalizado'} · {mode}")
+        if self._thermal_level >= T.CRITICAL:
+            lines.insert(0, "!! CALIENTE: baja los FPS del juego")
+        return lines
+
+    def _update_hud(self):
+        if not self.hud.running():
+            return
+        testing = time.monotonic() < self._hud_test_until
+        if not testing and not (self.cfg["hud"].get("enabled", True) and self.game_running()):
+            self.hud.send({"show": False})
+            return
+        rect = None
+        if self.game_running():
+            if self.geo_wid is None:
+                self.geo_wid = self._find_game_window()
+            rect = PT.window_geometry(self.geo_wid) if self.geo_wid else None
+        corner = self.t_thermal.corner.currentData() if testing else self.cfg["hud"].get("corner", "tl")
+        self.hud.send({"show": True, "lines": self._hud_lines(), "level": self._thermal_level,
+                       "rect": list(rect or self._screen_rect()), "corner": corner or "tl"})
+
+    def test_hud(self):
+        self._hud_test_until = time.monotonic() + 5
+        self.hud.start()
+        QTimer.singleShot(900, self._update_hud)
+        QTimer.singleShot(5200, self._apply_hud_state)
+
+    # ---------- perfiles de video ----------
+    def toggle_profile(self):
+        sc = self.collect()["scrcpy"]
+        a, b = sc.get("profile_a", "calidad"), sc.get("profile_b", "maximo")
+        target = b if C.current_profile(sc) == a else a
+        if target in C.PROFILE_RISKY and not SESSION["safety_ok"]:
+            self.showNormal()                     # la advertencia sale sobre la app
+            self.raise_()
+            self.activateWindow()
+        if not self.t_scrcpy.apply_profile(target):
+            self.append_log("[perfil] cambio cancelado")
+            return
+        if not self.save(quiet=True):
+            return
+        self.append_log(f"[perfil] {C.PROFILES[target][0]}" + (" (reabriendo la ventana del juego)"
+                                                               if self.game_running() else ""))
+        if self.game_running():
+            self.restart_video()
+        self._update_hud()
+
+    def _kill_game_later(self):
+        """Si la ventana no cierra en 3 s, forzarla; solo esa (no una que se abra despues)."""
+        gen = self._game_gen
+        QTimer.singleShot(3000, lambda: gen == self._game_gen and self.game_running() and self.game.kill())
+
+    def restart_video(self):
+        """Reabre la ventana de scrcpy con la config actual (el juego sigue en el celular)."""
+        if not self.game_running():
+            return
+        self._restart_video = True
+        self.game.terminate()
+        self._kill_game_later()
+
+    def _game_finished(self, *_):
+        self.geo_timer.stop()
+        self._video_fps = None
+        if self._restart_video:
+            self._restart_video = False
+            QTimer.singleShot(400, self._launch_scrcpy)
+            return
+        self._thermal_stop()
+        self._apply_hud_state()
+
     def start_all(self):
         if not self.engine_running():
             self.start_engine()
@@ -2431,6 +3050,12 @@ class MainWindow(QMainWindow):
             if ans == QMessageBox.StandardButton.Save and not self.save(quiet=True):
                 ev.ignore()
                 return
+        self._restart_video = False
+        self.hud.wanted = False
+        if self.hud.running():
+            self.hud.proc.kill()
+        if self.temp_tray:
+            self.temp_tray.hide()
         if self.game_running():
             self.game.terminate()
             if not self.game.waitForFinished(2000):
@@ -2447,6 +3072,9 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if "--hud" in sys.argv:                    # HUD sobre el juego (proceso aparte)
+        import hud
+        sys.exit(hud.main(sys.argv[:1]))
     if "--engine" in sys.argv:                 # modo motor (el .exe se lanza a si mismo)
         argv = [a for a in sys.argv[1:] if a != "--engine"]
         if IS_WINDOWS:

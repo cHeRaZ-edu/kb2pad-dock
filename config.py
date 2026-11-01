@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -249,6 +249,7 @@ DEFAULT_CONFIG = {
         "mode_back": "KEY_Q",        # Alt + Q: sale del chat al modo que tenias (fuera del chat: modo de inicio)
         "chat_window": True,         # chat activado: la ventana de scrcpy lleva teclado (kb2pad lo bloquea al jugar)
         "chat_keyboard": "uhid",     # uhid = teclado fisico (Android oculta su teclado); sdk = teclado del cel
+        "profile_toggle": "KEY_P",   # Alt + P: alterna entre los dos perfiles de video (reabre la ventana)
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
         "move": ["KEY_W", "KEY_S", "KEY_A", "KEY_D"],
@@ -298,6 +299,8 @@ DEFAULT_CONFIG = {
         "lowlat_mtk": False,                # mtk.ext.venc.scenario.based.sdk.mode=1
         "soc": "",                          # chip detectado (texto)
         "soc_vendor": "",                   # qcom | mtk | exynos | tensor | unisoc | kirin | other
+        "profile_a": "calidad",             # Alt + P alterna entre estos dos perfiles de video
+        "profile_b": "maximo",
         "launch_app": True,                 # abre el juego en el cel antes de scrcpy
         "package": "com.garena.game.mho",
         "ask_on_start": True,               # preguntar: abrir una app o solo mostrar la pantalla
@@ -307,6 +310,21 @@ DEFAULT_CONFIG = {
                                             # fixed = posicion/tamaño fijos, off = no tocar
         "connection": "usb",                # usb | wifi
         "wifi_address": "",                 # ip:puerto del celular en modo red
+    },
+    "thermal": {
+        "enabled": True,                    # leer la temperatura del celular mientras el juego esta abierto
+        "interval": 5,                      # segundos entre lecturas
+        "warn": 42.0,                       # grados (piel o bateria, la mas alta)
+        "critical": 46.0,                   # notificacion del sistema
+        "danger": 50.0,                     # notificacion de peligro + accion
+        "danger_action": "stream",          # stream = cerrar la transmision; stream_game = y el juego; notify = solo avisar
+        "notify": True,                     # notificaciones del sistema (solo critico y peligro)
+        "tray_icon": True,                  # segundo icono en la bandeja con la temperatura
+    },
+    "hud": {
+        "enabled": True,                    # cuadro con temperatura/bateria/FPS encima del juego
+        "corner": "tl",                     # tl tr bl br
+        "show_fps": True,                   # FPS del video que llegan a la PC (scrcpy --print-fps)
     },
 }
 
@@ -517,7 +535,7 @@ def validate(cfg):
             use(n, f"especial {label}")
 
     hotkeys, names = {}, set()
-    for k, label in (("chat", "Chat"), ("mode_back", "Volver de modo")):
+    for k, label in (("chat", "Chat"), ("mode_back", "Volver de modo"), ("profile_toggle", "Perfil de video")):
         hk = cfg["special"].get(k) or ""
         if hk and check(hk, f"Atajo {label}"):
             if hk in hotkeys:
@@ -591,6 +609,12 @@ def validate(cfg):
         shlex.split(cfg["scrcpy"].get("extra_args", ""))
     except ValueError as exc:
         errors.append(f"scrcpy: argumentos extra invalidos ({exc})")
+    th = cfg.get("thermal") or {}
+    try:
+        if not float(th.get("warn", 42)) < float(th.get("critical", 46)) < float(th.get("danger", 50)):
+            warnings.append("Temperatura: los limites deben ir de menor a mayor (aviso < critico < peligro)")
+    except (TypeError, ValueError):
+        errors.append("Temperatura: los limites no son numeros")
     extra = cfg["scrcpy"].get("extra_args", "")
     for flag, field in (("--max-size", "Resolucion maxima"), ("--no-audio", "Sin audio"),
                         ("--video-encoder", "Codificador")):
@@ -639,7 +663,7 @@ def effective_serial(sc):
     return (sc.get("serial") or "").strip()
 
 
-def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled"):
+def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled", print_fps=False):
     """window: (x, y, w, h) para abrir la ventana ahi (si no, la posicion fija si esta activada).
     version: (mayor, menor) de scrcpy; desde la 4.0 la ventana guarda la proporcion del video y no
     deja ocupar toda la pantalla si no se le quita ese candado."""
@@ -657,6 +681,8 @@ def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled"):
         cmd.append(f"--max-size={int(sc['max_size'])}")
     if sc.get("no_audio"):
         cmd.append("--no-audio")
+    if print_fps and "--print-fps" not in (sc.get("extra_args") or ""):
+        cmd.append("--print-fps")
     if sc.get("no_mipmaps"):
         cmd.append("--no-mipmaps")
     if sc.get("stay_awake"):
@@ -731,6 +757,51 @@ def recommended_lowlat(vendor, version=None):
     rec = {"lowlat_realtime": not (version and tuple(version) >= (4, 0)), "lowlat_bframes": True,
            "lowlat_qcom": vendor == "qcom", "lowlat_mtk": vendor == "mtk"}
     return rec
+
+
+# ---------------------------------------------------------------- perfiles de video
+PROFILES = {
+    "calidad": ("Mejor calidad",
+                "Se ve muy bien, pero con mas retraso. Para videos, mostrar la pantalla, juegos casuales o que "
+                "no piden reacciones rapidas.",
+                {"codec": "h265", "max_size": 0, "bitrate": "30M"}),
+    "balanceado": ("Balanceado",
+                   "Buena imagen con retraso moderado. Para la mayoria de los juegos sin combates exigentes.",
+                   {"codec": "h265", "max_size": 1920, "bitrate": "20M"}),
+    "rendimiento": ("Rendimiento",
+                    "Menos retraso con buena imagen: h264, 1920 px y 16M, sin opciones avanzadas. Para juegos de "
+                    "accion.",
+                    {"codec": "h264", "max_size": 1920, "bitrate": "16M"}),
+    "maximo": ("Maximo rendimiento",
+               "El menor retraso: h264, 1920 px, 8M, codificador de hardware y las optimizaciones del codificador "
+               "de tu chip. El celular trabaja mas y se calienta mas.",
+               {"codec": "h264", "max_size": 1920, "bitrate": "8M"}),
+}
+PROFILE_RISKY = {"maximo"}
+
+
+def profile_settings(name, sc, version=None, encoders=()):
+    """Valores del perfil para la seccion scrcpy. encoders: [(codec, codificador, tipo)] del celular."""
+    _label, _desc, base = PROFILES[name]
+    out = dict(base)
+    out.update({"encoder": "", "encoder_codec": "", "lowlat_enabled": False,
+                **{k: False for k in LOWLAT_OPTIONS}})
+    if name == "maximo":
+        hw = [e for e in encoders if e[0] == "h264" and e[2] == "hw" and not e[1].startswith("c2.android")]
+        if hw:
+            out["encoder"], out["encoder_codec"] = hw[0][1], "h264"
+        out["lowlat_enabled"] = True
+        out.update(recommended_lowlat(sc.get("soc_vendor") or "other", version))
+    return out
+
+
+def current_profile(sc):
+    """Nombre del perfil que coincide con los valores actuales, o '' (personalizado)."""
+    for name, (_l, _d, base) in PROFILES.items():
+        if all(str(sc.get(k)) == str(v) for k, v in base.items()):
+            if bool(sc.get("lowlat_enabled")) == (name in PROFILE_RISKY):
+                return name
+    return ""
 
 
 def detect_soc(props, encoders=()):

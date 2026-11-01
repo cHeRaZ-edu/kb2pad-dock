@@ -222,3 +222,30 @@ def mode_icon(kind, letter="", active=True):
     for size in (16, 22, 24, 32, 48, 64, 128):
         icon.addPixmap(render(kind, size, letter, active))
     return icon
+
+
+TEMP_COLORS = ["#3c9a3c", "#d9a400", "#e0701c", "#d63a3a"]
+
+
+def temp_icon(value, level=0):
+    """Icono de la bandeja con la temperatura del celular (numero sobre color segun el nivel)."""
+    icon = QIcon()
+    text = "?" if value is None else str(int(round(value)))
+    for size in (16, 22, 24, 32, 48, 64):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(TEMP_COLORS[max(0, min(3, level))]))
+        p.drawRoundedRect(QRectF(0, 0, size, size), size * 0.22, size * 0.22)
+        f = QFont()
+        f.setBold(True)
+        f.setPixelSize(int(size * (0.62 if len(text) <= 2 else 0.45)))
+        p.setFont(f)
+        p.setPen(QColor("white"))
+        p.drawText(QRectF(0, 0, size, size), Qt.AlignmentFlag.AlignCenter, text)
+        p.end()
+        icon.addPixmap(pm)
+    return icon
+

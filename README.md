@@ -74,6 +74,11 @@ flowchart LR
 - **Menos retraso de video**: elige el codificador del celular, la resolución máxima y, opcional,
   las opciones de baja latencia de cada fabricante (Qualcomm, MediaTek...) con un botón que detecta
   tu chip.
+- **Perfiles de video** (Mejor calidad, Balanceado, Rendimiento, Máximo rendimiento) y `Alt + P`
+  para alternar entre dos en plena partida.
+- **Temperatura del celular**: HUD encima del juego con temperatura, batería, FPS, perfil y modo;
+  icono con la temperatura en la bandeja; notificación al llegar a crítico y, en peligro, cierra la
+  transmisión (o lo que elijas).
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
 - Con **Alt presionado** no se manda nada al juego: `Alt+Tab` y los atajos de scrcpy (`Alt+O`)
   no disparan botones.
@@ -103,8 +108,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.3.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.3.0-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.4.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.4.0-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -155,6 +160,7 @@ Monster Hunter Outlanders, como ejemplo. En los combos (`LT + B`), el primer bot
 | `Bloq Mayús` | Mouse como cámara sí/no | |
 | `Alt + T` | Modo chat (el teclado escribe en el celular) | Chat del juego |
 | `Alt + Q` | Volver: del chat al modo que tenías; fuera del chat, al modo de inicio | |
+| `Alt + P` | Alternar entre dos perfiles de video (la ventana del juego se reabre) | Explorar con calidad, pelear con rendimiento |
 
 \* El click izquierdo y la rueda solo cuentan como botón con el mouse en modo cámara. Fuera de
 ese modo, el mouse funciona normal en la ventana (clics y scroll en los menús). Cada muesca de la
@@ -271,8 +277,51 @@ muestra qué va a cambiar, con sus advertencias, antes de aplicarlo. También pu
 sección y marcar las casillas a mano. Si el celular no reconoce una opción, la ignora. Si scrcpy
 no abre o la imagen se ve mal, pulsa **Quitar optimizaciones**.
 
+### Perfiles de video
+
+Arriba de la sección *Video* eliges un perfil y llena los campos de un jalón:
+
+| Perfil | Qué pone | Para |
+|---|---|---|
+| **Mejor calidad** | h265, resolución original, 30M | Se ve muy bien pero con más retraso: videos, mostrar la pantalla, juegos casuales |
+| **Balanceado** | h265, 1920 px, 20M | La mayoría de los juegos sin combates exigentes |
+| **Rendimiento** | h264, 1920 px, 16M, sin opciones avanzadas | Juegos de acción |
+| **Máximo rendimiento** ⚠ | h264, 1920 px, 8M, codificador de hardware y las optimizaciones de tu chip | El menor retraso; el celular trabaja y se calienta más |
+
+`Alt + P` alterna entre dos perfiles que eliges (por defecto Mejor calidad y Máximo rendimiento).
+Con el juego abierto, la ventana se reabre (2–3 s en negro; el juego sigue en el celular).
+
+**Advertencia de seguridad**: la primera vez en cada sesión que activas Máximo rendimiento o las
+opciones del codificador, sale una advertencia que no se puede aceptar hasta pasados 8 segundos.
+Después, en esa misma sesión, ya no interrumpe (para que `Alt + P` no te pare en un combate).
+
+![Advertencia](docs/img/dialogo-advertencia.png)
+
 **Para medir**: graba en cámara lenta con otro celular el monitor y el celular juntos, presiona una
 tecla y cuenta los frames de diferencia antes y después de cada cambio.
+
+## Temperatura y HUD
+
+Mientras el juego está abierto, kb2pad lee la temperatura del celular con adb cada 5 s
+(`dumpsys thermalservice` y `dumpsys battery`). Cuenta la de la **piel** o la **batería** (la más
+alta) y el estado térmico de Android; la del CPU se muestra, pero sube a 70–80 °C en juegos y es normal.
+
+| Nivel | Por defecto | Qué pasa |
+|---|---|---|
+| Aviso | 42 °C o Android en *moderado* | HUD, barra de la app e icono de la bandeja en amarillo |
+| Crítico | 46 °C o *severo* | Naranja + **una notificación del sistema** (máximo cada 10 min) |
+| Peligro | 50 °C o *crítico* | Rojo + **notificación de peligro** y, si sigue así dos lecturas, **cierra la transmisión** (o la transmisión y el juego, o solo avisa) |
+
+- **HUD**: un cuadro chico encima del juego con temperatura, batería, FPS del video, perfil y modo.
+  No recibe clics ni toma el foco. Eliges la esquina, y se activa o apaga desde el menú del icono de
+  la bandeja. En Linux con Wayland se dibuja con X11 (XWayland) para poder ir encima del juego.
+- **Icono de temperatura** en la bandeja, con el número y el color del nivel.
+- Todo se ajusta en la pestaña **Temperatura y HUD**.
+
+Lo que más calienta el celular es el juego: bajar sus FPS en sus ajustes ayuda más que bajar la
+calidad del video.
+
+![Pestaña Temperatura y HUD](docs/img/linux-temperatura.png)
 
 ## Notas
 
@@ -295,6 +344,9 @@ tecla y cuenta los frames de diferencia antes y después de cada cambio.
 | `config.py` | Valores por defecto, carga, guardado y validación del `config.json`. |
 | `keycodes.py`, `_ecodes_data.py` | Códigos de teclas (nombres de evdev en los dos sistemas). |
 | `platform_tools.py` | adb, rotación del celular y manejo de la ventana de scrcpy según el sistema. |
+| `thermal.py` | Lee y clasifica la temperatura del celular (`dumpsys thermalservice` / `battery`). |
+| `hud.py` | El HUD encima del juego (proceso aparte: `app.py --hud`). |
+| `icons.py` | Iconos de los modos y de la temperatura, dibujados con QPainter. |
 | `kb2pad.spec`, `vigem/` | Build de Windows (PyInstaller) y el cliente/instalador de ViGEmBus. |
 
 La configuración se guarda en:

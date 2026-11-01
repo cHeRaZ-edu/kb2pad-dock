@@ -66,6 +66,7 @@ class EngineConfig:
         self.alt_blocks = bool(sp.get("alt_blocks", True))
         self.chat_key = k(sp["chat"]) if sp.get("chat") else None
         self.back_key = k(sp["mode_back"]) if sp.get("mode_back") else None
+        self.profile_key = k(sp["profile_toggle"]) if sp.get("profile_toggle") else None
         self.chat_alt = k("KEY_LEFTALT")     # en el chat solo Alt izq: AltGr + Q escribe @
         self.mode_hotkeys = {}       # tecla -> nombre del modo
         for m in raw.get("modes") or []:
@@ -438,6 +439,10 @@ class Mapper:
                     log("Chat: ON")        # ya estaba: la GUI le regresa el foco a la ventanita
                 else:
                     self.set_chat(True)
+                return
+            if ev.code == cfg.profile_key:
+                self.consumed.add(ev.code)
+                log("Perfil: alternar")         # la GUI cambia el perfil de video y reabre scrcpy
                 return
             if ev.code == cfg.back_key:
                 self.consumed.add(ev.code)

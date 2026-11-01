@@ -32,7 +32,7 @@ carga) y un juego que acepte control.
 
 1. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.3.0-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
+   `kb2pad-dock-v0.4.0-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
    No lo abras desde dentro del zip.
 2. **Descarga scrcpy.**
    En [scrcpy Releases](https://github.com/Genymobile/scrcpy/releases) baja el zip
@@ -108,6 +108,13 @@ La tabla de controles y de modos está en el [README](../README.md#controles-por
 hardware. Para ir más allá está *Optimización del codificador (avanzado)* con el botón
 **Bajar latencia (automático)**; viene apagada y te muestra sus advertencias antes de aplicar
 (ver el [README](../README.md#bajar-el-retraso-del-video)).
+
+**Perfiles y temperatura**: en *Video* eliges un perfil (Mejor calidad, Balanceado, Rendimiento o
+Máximo rendimiento) y con **Alt + P** alternas entre dos en plena partida. Mientras juegas, kb2pad
+lee la temperatura del celular: la ves en el HUD encima del juego, en la barra de la app y en un
+icono de la bandeja; te avisa con una notificación al llegar a crítico y, en peligro, cierra la
+transmisión. Se ajusta en la pestaña **Temperatura y HUD** (ver el
+[README](../README.md#temperatura-y-hud)).
 
 ## Parte 5. Apagar la pantalla del celular
 

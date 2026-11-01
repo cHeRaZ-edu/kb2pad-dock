@@ -37,18 +37,19 @@ control.
 
    CachyOS / Arch:
    ```fish
-   sudo pacman -S --needed python-pyqt6 python-evdev scrcpy android-tools xdotool
+   sudo pacman -S --needed python-pyqt6 python-evdev scrcpy android-tools xdotool xcb-util-cursor
    ```
-   En Debian, Ubuntu o Fedora instala los equivalentes (PyQt6, python-evdev, adb, xdotool).
+   En Debian, Ubuntu o Fedora instala los equivalentes (PyQt6, python-evdev, adb, xdotool,
+   libxcb-cursor0). `xcb-util-cursor` hace falta para que el HUD se vea encima del juego en Wayland.
    Revisa que **scrcpy sea 2.7 o más reciente** (`scrcpy --version`); si el de tu distribución es
    más viejo, usa el de los [releases de scrcpy](https://github.com/Genymobile/scrcpy/releases).
 
 2. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.3.0-linux.tar.gz` y descomprímelo:
+   `kb2pad-dock-v0.4.0-linux.tar.gz` y descomprímelo:
    ```fish
    mkdir -p ~/Apps
-   tar xzf ~/Descargas/kb2pad-dock-v0.3.0-linux.tar.gz -C ~/Apps
+   tar xzf ~/Descargas/kb2pad-dock-v0.4.0-linux.tar.gz -C ~/Apps
    ```
    O clona el repo:
    ```fish
@@ -146,6 +147,13 @@ hardware. Para ir más allá está *Optimización del codificador (avanzado)* co
 **Bajar latencia (automático)**; viene apagada y te muestra sus advertencias antes de aplicar
 (ver el [README](../README.md#bajar-el-retraso-del-video)).
 
+**Perfiles y temperatura**: en *Video* eliges un perfil (Mejor calidad, Balanceado, Rendimiento o
+Máximo rendimiento) y con **Alt + P** alternas entre dos en plena partida. Mientras juegas, kb2pad
+lee la temperatura del celular: la ves en el HUD encima del juego, en la barra de la app y en un
+icono de la bandeja; te avisa con una notificación al llegar a crítico y, en peligro, cierra la
+transmisión. Se ajusta en la pestaña **Temperatura y HUD** (ver el
+[README](../README.md#temperatura-y-hud)).
+
 ## Parte 5. Apagar la pantalla del celular
 
 scrcpy tiene la opción `--turn-screen-off`, pero en algunos celulares (por ejemplo con HyperOS)
@@ -215,4 +223,5 @@ sudo python ~/Apps/kb2pad-dock/engine.py --config ~/.config/kb2pad/config.json -
 | En el chat no se escribe nada | Activa *Mandar lo que escribo al celular* en *Sticks y teclas especiales* y vuelve a abrir el juego (el teclado se pone al abrir la ventana). En Linux instala `xdotool`. |
 | Jugando, las teclas hacen cosas raras en el celular | Desactiva *Mandar lo que escribo al celular* y vuelve a abrir el juego, y abre un issue en el repo con lo que pasó. |
 | En el chat salen símbolos en vez de `ñ` o acentos | Falta el idioma del teclado *scrcpy* en el celular: botón *Idioma del teclado en el celular...* con el juego abierto. |
+| El HUD no aparece (log: `[hud] no pudo abrirse`) | En Wayland instala `xcb-util-cursor`. Si aparece pero queda detrás del juego, abre un issue en el repo con tu escritorio; mientras, la temperatura sigue en la bandeja y en la barra de la app. |
 | En red no conecta | Celular y PC en la misma red. Si el celular se reinició, conecta el cable y usa *Activar red con el cable* otra vez. |

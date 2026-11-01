@@ -9,7 +9,7 @@ a = Analysis(
         ("vigem/ViGEmBusSetup_x64.msi", "vigem"),
         ("vigem/LICENSE-vgamepad.txt", "vigem"),
     ],
-    hiddenimports=["engine_win", "core", "keycodes", "_ecodes_data", "platform_tools"],
+    hiddenimports=["engine_win", "core", "keycodes", "_ecodes_data", "platform_tools", "hud", "thermal"],
     excludes=["evdev", "tkinter", "unittest", "pydoc", "PyQt6.QtNetwork", "PyQt6.QtQml",
               "PyQt6.QtQuick", "PyQt6.QtSql", "PyQt6.QtTest", "PyQt6.QtMultimedia",
               "PyQt6.QtPdf", "PyQt6.QtSvg", "PyQt6.QtOpenGL", "PyQt6.QtDBus"],

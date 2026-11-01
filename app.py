@@ -744,8 +744,14 @@ class SticksTab(QWidget):
         self.profile_toggle = KeyField(allow_empty=True)
         self.profile_toggle.changed.connect(self.changed.emit)
         form.addRow("Cambiar de perfil:  Alt +", self.profile_toggle)
-        hint = QLabel("Alterna entre los dos perfiles de video que eliges en la pestaña Juego (por ejemplo, Mejor "
-                      "calidad para explorar y Maximo rendimiento para pelear). La ventana del juego se reabre.")
+        self.cool_toggle = KeyField(allow_empty=True)
+        self.cool_toggle.changed.connect(self.changed.emit)
+        form.addRow("Perfil Enfriar:  Alt +", self.cool_toggle)
+        hint = QLabel("Cambiar de perfil alterna entre los dos que eliges en la pestaña Juego (por ejemplo, Mejor "
+                      "calidad para explorar y Maximo rendimiento para pelear). Perfil Enfriar pone el perfil para "
+                      "bajar la temperatura y, otra vez, regresa al que tenias. La ventana del juego se reabre. "
+                      "Evita letras que scrcpy usa con Alt (Q cierra scrcpy, P es el boton de encendido, O apaga "
+                      "la pantalla...).")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: gray;")
         form.addRow(hint)
@@ -780,6 +786,7 @@ class SticksTab(QWidget):
         self.chat_window.setChecked(bool(sp.get("chat_window", True)))
         self.chat_keyboard.setCurrentIndex(max(0, self.chat_keyboard.findData(sp.get("chat_keyboard", "uhid"))))
         self.profile_toggle.set_value(sp.get("profile_toggle", ""))
+        self.cool_toggle.set_value(sp.get("cool_toggle", ""))
 
     def store(self, cfg):
         for key, fs in self.fields.items():
@@ -793,6 +800,7 @@ class SticksTab(QWidget):
         cfg["special"]["chat_window"] = self.chat_window.isChecked()
         cfg["special"]["chat_keyboard"] = self.chat_keyboard.currentData() or "uhid"
         cfg["special"]["profile_toggle"] = self.profile_toggle.value()
+        cfg["special"]["cool_toggle"] = self.cool_toggle.value()
 
 
 def _dspin(lo, hi, step, decimals=2, suffix=""):
@@ -985,7 +993,7 @@ class ScrcpyTab(QWidget):
         form.addRow("Perfil de video:", self.profile)
         form.addRow("", self.profile_desc)
         row = QHBoxLayout()
-        row.addWidget(QLabel("El atajo (Alt + P) alterna entre"))
+        row.addWidget(QLabel("El atajo de perfil (Alt + L) alterna entre"))
         row.addWidget(self.profile_a)
         row.addWidget(QLabel("y"))
         row.addWidget(self.profile_b)
@@ -1001,6 +1009,15 @@ class ScrcpyTab(QWidget):
         form.addRow("", self.encoder_status)
         form.addRow("Bitrate:", self.bitrate)
         form.addRow("FPS maximos:", self.max_fps)
+        self.game_fps = QComboBox()
+        self.game_fps.addItem("No limitar", 0)
+        for n in (30, 40, 45, 60):
+            self.game_fps.addItem(f"{n} FPS", n)
+        self.game_fps.currentIndexChanged.connect(self._changed)
+        form.addRow("Limitar FPS del juego:", self.game_fps)
+        form.addRow("", self._hint("Le pide a Android (Game Mode, Android 13+) que limite el juego mientras esta "
+                                   "abierto; baja mucho el calor. Algunos celulares o juegos no lo respetan: "
+                                   "revisa 'JUEGO' en el HUD. Se quita al cerrar el juego o cambiar de perfil."))
         form.addRow("Resolucion maxima:", self.max_size)
         form.addRow("", self._hint("Lado mayor del video. Con 1920 en un monitor 1080p el celular codifica menos "
                                    "pixeles y llega antes. 'Original' = la resolucion del celular."))
@@ -1202,6 +1219,7 @@ class ScrcpyTab(QWidget):
             "connection": self.connection.currentData() or "usb",
             "wifi_address": self.wifi_address.text().strip(),
             "max_size": self.max_size.value(),
+            "game_fps": self.game_fps.currentData() or 0,
             "no_audio": self.no_audio.isChecked(),
             "encoder": self._encoder_value()[0],
             "encoder_codec": self._encoder_value()[1],
@@ -1351,6 +1369,10 @@ class ScrcpyTab(QWidget):
             self.bitrate.setText(str(vals["bitrate"]))
         if "max_size" in vals:
             self.max_size.setValue(int(vals["max_size"]))
+        if "max_fps" in vals:
+            self.max_fps.setValue(int(vals["max_fps"]))
+        if "game_fps" in vals:
+            self.game_fps.setCurrentIndex(max(0, self.game_fps.findData(int(vals["game_fps"]))))
         if "encoder" in vals:
             codec = vals.get("encoder_codec") or self.codec.currentText()
             self._enc_choice[codec] = vals["encoder"]
@@ -1447,6 +1469,7 @@ class ScrcpyTab(QWidget):
         self.connection.setCurrentIndex(max(0, self.connection.findData(sc.get("connection", "usb"))))
         self.wifi_address.setText(sc.get("wifi_address", ""))
         self.max_size.setValue(int(sc.get("max_size") or 0))
+        self.game_fps.setCurrentIndex(max(0, self.game_fps.findData(int(sc.get("game_fps") or 0))))
         self.no_audio.setChecked(bool(sc.get("no_audio")))
         self._wanted_encoder = (sc.get("encoder", ""), sc.get("encoder_codec", ""))
         self._enc_choice = {}
@@ -2356,8 +2379,11 @@ class MainWindow(QMainWindow):
         self.fps_timer.setInterval(2000)
         self.fps_timer.timeout.connect(self._fps_poll)
         self._device_info = None
-        self._dev_fps, self._dev_last_frame, self._flip_prev = None, None, None
+        self._dev_fps, self._dev_last_frame, self._flip_prev = None, {}, None
         self._fps_misses = 0
+        self._focus_pkg = ""
+        self._game_fps_applied = None            # (paquete, respaldo de game_overlay) si se limito el juego
+        self._before_cool = None
 
         # Linux: avisar al control si el juego tiene el foco (escudo del teclado)
         self._game_keyboard = "disabled"
@@ -2564,6 +2590,8 @@ class MainWindow(QMainWindow):
             self._update_tray()
         elif line == "Perfil: alternar":
             self.toggle_profile()
+        elif line == "Perfil: enfriar":
+            self.toggle_cool()
 
     def _mode_changed(self, name):
         self._mode_name = name
@@ -2807,6 +2835,8 @@ class MainWindow(QMainWindow):
         self._thermal_start()
         self._apply_hud_state()
         QTimer.singleShot(2500, self._device_info_poll)
+        if int(sc.get("game_fps") or 0):
+            QTimer.singleShot(6000, self._apply_game_fps)     # el juego ya tiene el foco
         if sc.get("rotate_fit", "screen") == "off":
             return
         missing = PT.window_tool_missing()
@@ -2962,8 +2992,10 @@ class MainWindow(QMainWindow):
         if level >= T.CRITICAL and prev < T.CRITICAL and time.monotonic() - self._last_crit_notify > 600:
             self._last_crit_notify = time.monotonic()
             if level == T.CRITICAL:
-                self._notify("Celular caliente", f"{reason}. Baja los FPS del juego o el perfil de video, o deja "
-                             "descansar el celular.")
+                cool = self.cfg["special"].get("cool_toggle")
+                self._notify("Celular caliente", f"{reason}. " + (f"Alt + {C.input_label(cool)} pone el perfil "
+                             "Enfriar; " if cool else "") + "tambien ayuda bajar los FPS del juego o dejar descansar "
+                             "el celular.")
         if level == T.DANGER:
             self._danger_hits += 1
         else:
@@ -3023,7 +3055,7 @@ class MainWindow(QMainWindow):
             self.hud.start()
             QTimer.singleShot(800, self._update_hud)
             if C.hud_field_on(self.cfg, "device_fps") and not self.fps_timer.isActive():
-                self._dev_fps, self._dev_last_frame, self._flip_prev = None, None, None
+                self._dev_fps, self._dev_last_frame, self._flip_prev = None, {}, None
                 self._fps_misses = 0
                 self.fps_timer.start()
         elif time.monotonic() > self._hud_test_until:
@@ -3058,12 +3090,20 @@ class MainWindow(QMainWindow):
 
     def _fps_done(self, *_):
         out = bytes(self.fps_proc.readAllStandardOutput()).decode(errors="replace")
-        last, fps, counter, layer = PI.parse_fps(out)
+        layers, counter, focus = PI.parse_fps(out)
+        if focus:
+            self._focus_pkg = focus
         now = time.monotonic()
         value = None
-        if last is not None:                      # tiempos de los frames de la capa del juego
-            value = 0 if last == self._dev_last_frame else fps
-            self._dev_last_frame = last
+        timed = [(name, last, fps) for name, last, fps in layers if last is not None]
+        layer = timed[0][0] if timed else (layers[0][0] if layers else "")
+        if timed:                                 # tiempos de los frames de las capas del juego
+            # la capa que sigue recibiendo frames (al entrar a una caceria la vieja se queda quieta)
+            fresh = [(fps, name) for name, last, fps in timed if self._dev_last_frame.get(name) != last]
+            self._dev_last_frame = {name: last for name, last, _f in timed}
+            value = max(fresh)[0] if fresh else 0
+            if fresh:
+                layer = max(fresh)[1]
         elif counter is not None:                 # respaldo: frames que dibuja la pantalla
             if self._flip_prev and counter >= self._flip_prev[0] and now > self._flip_prev[1]:
                 value = round((counter - self._flip_prev[0]) / (now - self._flip_prev[1]))
@@ -3119,7 +3159,10 @@ class MainWindow(QMainWindow):
             vid_fps = 59 if vid_fps is None else vid_fps
         rows = []
         if self._thermal_level >= T.CRITICAL:
-            rows.append([["!! CALIENTE: baja los FPS del juego", ["#e9edf2", Y, O, R][self._thermal_level]]])
+            cool = self.cfg["special"].get("cool_toggle")
+            tip = f"Alt+{C.input_label(cool)} = Enfriar" if cool and C.current_profile(self.cfg["scrcpy"]) != "enfriar" \
+                else "baja los FPS del juego"
+            rows.append([[f"!! CALIENTE: {tip}", ["#e9edf2", Y, O, R][self._thermal_level]]])
         for key, on in hv.get("fields") or []:
             if not on:
                 continue
@@ -3204,7 +3247,19 @@ class MainWindow(QMainWindow):
     def toggle_profile(self):
         sc = self.collect()["scrcpy"]
         a, b = sc.get("profile_a", "calidad"), sc.get("profile_b", "maximo")
-        target = b if C.current_profile(sc) == a else a
+        self.switch_profile(b if C.current_profile(sc) == a else a)
+
+    def toggle_cool(self):
+        """Alt+E: perfil Enfriar; otra vez, regresa al perfil que tenias."""
+        sc = self.collect()["scrcpy"]
+        current = C.current_profile(sc)
+        if current == "enfriar":
+            self.switch_profile(self._before_cool or sc.get("profile_a", "calidad"))
+        else:
+            self._before_cool = current or None
+            self.switch_profile("enfriar")
+
+    def switch_profile(self, target):
         if target in C.PROFILE_RISKY and not SESSION["safety_ok"]:
             self.showNormal()                     # la advertencia sale sobre la app
             self.raise_()
@@ -3218,7 +3273,48 @@ class MainWindow(QMainWindow):
                                                                if self.game_running() else ""))
         if self.game_running():
             self.restart_video()
+        self._apply_game_fps()
         self._update_hud()
+
+    # ---------- limite de FPS del juego (Game Mode de Android) ----------
+    def _game_package(self):
+        sc = self.cfg["scrcpy"]
+        return self._focus_pkg or (sc.get("package") if sc.get("launch_app") else "") or sc.get("package", "")
+
+    def _adb_shell(self, script, timeout=8):
+        sc = self.cfg["scrcpy"]
+        if not C.tool_exists(sc, "adb"):
+            return ""
+        return PT.run(PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", script), timeout=timeout)
+
+    def _apply_game_fps(self):
+        """Pone o quita el limite de FPS del juego segun el perfil (game_fps). Android 13+: modo bateria de
+        Game Mode con un FPS fijo. Se guarda lo que habia en game_overlay para regresarlo al quitarlo."""
+        want = int(self.cfg["scrcpy"].get("game_fps") or 0) if self.game_running() else 0
+        if want and not self._game_fps_applied:
+            pkg = self._game_package()
+            if not re.fullmatch(r"[A-Za-z][\w.]+", pkg or ""):
+                self.append_log("[enfriar] no se que juego limitar (abre el juego primero)")
+                return
+            backup = self._adb_shell(f"device_config get game_overlay {pkg}").strip()
+            out = self._adb_shell(f"device_config put game_overlay {pkg} mode=3,fps={want}; "
+                                  f"cmd game mode battery {pkg}")
+            self._game_fps_applied = (pkg, "" if backup in ("", "null") else backup)
+            self.append_log(f"[enfriar] pedi a Android limitar {pkg} a {want} FPS (Game Mode, modo bateria)"
+                            + (f": {out.strip()[:200]}" if out.strip() else "")
+                            + ". Mira 'JUEGO' en el HUD para ver si el celular lo respeta.")
+        elif not want and self._game_fps_applied:
+            self._remove_game_fps()
+
+    def _remove_game_fps(self):
+        if not self._game_fps_applied:
+            return
+        pkg, backup = self._game_fps_applied
+        self._game_fps_applied = None
+        restore = (f"device_config put game_overlay {pkg} '{backup}'" if backup
+                   else f"device_config delete game_overlay {pkg}")
+        self._adb_shell(f"cmd game mode standard {pkg}; {restore}")
+        self.append_log(f"[enfriar] quite el limite de FPS de {pkg}")
 
     def _kill_game_later(self):
         """Si la ventana no cierra en 3 s, forzarla; solo esa (no una que se abra despues)."""
@@ -3242,6 +3338,7 @@ class MainWindow(QMainWindow):
             return
         self._thermal_stop()
         self._dev_fps = None
+        self._remove_game_fps()
         self._apply_hud_state()
 
     def start_all(self):
@@ -3266,6 +3363,7 @@ class MainWindow(QMainWindow):
                 ev.ignore()
                 return
         self._restart_video = False
+        self._remove_game_fps()
         self.hud.wanted = False
         if self.hud.running():
             self.hud.proc.kill()

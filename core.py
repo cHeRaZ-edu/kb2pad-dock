@@ -67,6 +67,7 @@ class EngineConfig:
         self.chat_key = k(sp["chat"]) if sp.get("chat") else None
         self.back_key = k(sp["mode_back"]) if sp.get("mode_back") else None
         self.profile_key = k(sp["profile_toggle"]) if sp.get("profile_toggle") else None
+        self.cool_key = k(sp["cool_toggle"]) if sp.get("cool_toggle") else None
         self.chat_alt = k("KEY_LEFTALT")     # en el chat solo Alt izq: AltGr + Q escribe @
         self.mode_hotkeys = {}       # tecla -> nombre del modo
         for m in raw.get("modes") or []:
@@ -94,6 +95,9 @@ class EngineConfig:
         self.radial_release_delay = float(r["release_delay"])
 
         self.combo_delay = float(raw["combo_delay"])
+        # atajos de kb2pad con Alt: no deben llegar a scrcpy (que tiene sus propios atajos con Alt)
+        self.alt_hotkeys = frozenset(c for c in (self.chat_key, self.back_key, self.profile_key, self.cool_key,
+                                                 *self.mode_hotkeys) if c)
         self.set_mode(mode if mode in self.mode_maps else self.start_mode)
 
     @staticmethod
@@ -439,6 +443,10 @@ class Mapper:
                     log("Chat: ON")        # ya estaba: la GUI le regresa el foco a la ventanita
                 else:
                     self.set_chat(True)
+                return
+            if ev.code == cfg.cool_key:
+                self.consumed.add(ev.code)
+                log("Perfil: enfriar")          # la GUI pone el perfil Enfriar (o regresa al anterior)
                 return
             if ev.code == cfg.profile_key:
                 self.consumed.add(ev.code)

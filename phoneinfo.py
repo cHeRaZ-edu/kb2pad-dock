@@ -33,20 +33,24 @@ DIMENSITY = {
 }
 
 FPS_LAT = "=====LATENCY====="
+FPS_END = "=====END====="
 FPS_FLIP = "=====FLIPS====="
-# sh del celular (toybox): app con el foco -> capa SurfaceView de esa app -> sus tiempos de frames
+# sh del celular (toybox): app con el foco -> sus capas con frames (BLAST de la SurfaceView; si no hay,
+# cualquier BLAST de la app) -> tiempos de los ultimos frames de CADA una (al entrar a una caceria el
+# juego crea otra capa y la vieja sigue en la lista: la GUI se queda con la que tiene frames nuevos)
 FPS_SCRIPT = (
     "P=$(dumpsys window | grep -m1 mCurrentFocus | grep -oE '[A-Za-z0-9_.]+/' | head -n1 | tr -d /); "
     "[ -z \"$P\" ] && P=$(dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' "
     "| grep -oE '[A-Za-z0-9_.]+/' | head -n1 | tr -d /); "
-    # la capa con frames es la "(BLAST)" de la SurfaceView del juego (la otra solo es el contenedor)
     # Android 16 lista 'RequestedLayerState{<nombre> parentId=...}': se deja solo el nombre
     "S=$(dumpsys SurfaceFlinger --list | grep -F \"$P\" | grep -v Background "
     "| sed -E 's/^RequestedLayerState[{]//; s/ (parentId|relativeParentId|z)=.*$//; s/[}]$//'); "
-    "L=$(echo \"$S\" | grep -F SurfaceView | grep -F BLAST | head -n1); "
-    "[ -z \"$L\" ] && L=$(echo \"$S\" | grep -F BLAST | head -n1); "
-    "[ -z \"$L\" ] && L=$(echo \"$S\" | grep -F SurfaceView | head -n1); "
-    f"echo \"FOCUS=$P\"; echo \"LAYER=$L\"; echo {FPS_LAT}; [ -n \"$L\" ] && dumpsys SurfaceFlinger --latency \"$L\"; "
+    "C=$(echo \"$S\" | grep -F SurfaceView | grep -F BLAST | head -n4); "
+    "[ -z \"$C\" ] && C=$(echo \"$S\" | grep -F BLAST | head -n4); "
+    "[ -z \"$C\" ] && C=$(echo \"$S\" | grep -F SurfaceView | head -n4); "
+    "echo \"FOCUS=$P\"; "
+    "echo \"$C\" | while IFS= read -r L; do [ -n \"$L\" ] || continue; echo \"LAYER=$L\"; "
+    f"echo {FPS_LAT}; dumpsys SurfaceFlinger --latency \"$L\"; echo {FPS_END}; done; "
     f"echo {FPS_FLIP}; service call SurfaceFlinger 1013"
 )
 _INVALID = (0, 9223372036854775807)
@@ -110,29 +114,39 @@ def parse_info(text):
             "model": (props.get("ro.product.model") or "").strip()}
 
 
-def parse_fps(text):
-    """Salida de FPS_SCRIPT -> (ultimo_frame_ns, fps_en_el_ultimo_segundo, contador_1013, capa).
-    Cualquiera puede ser None si el celular no lo da."""
-    head, _, rest = (text or "").partition(FPS_LAT)
-    lat, _, flips = rest.partition(FPS_FLIP)
-    m = re.search(r"LAYER=(.*)", head)
-    layer = m.group(1).strip() if m else ""
+def _frames(lat):
+    """Tiempos de los frames de una salida de --latency -> (ultimo_ns, fps_del_ultimo_segundo)."""
     times = []
     for line in lat.splitlines():
         parts = line.split()
         if len(parts) != 3 or not all(p.isdigit() for p in parts):
             continue
-        desired, actual, ready = (int(p) for p in parts)
+        desired, actual, _ready = (int(p) for p in parts)
         t = actual if actual not in _INVALID else desired
         if t not in _INVALID:
             times.append(t)
-    last = fps = None
-    if len(times) >= 2:
-        times.sort()
-        last = times[-1]
-        fps = sum(1 for t in times if t > last - 1_000_000_000)
+    if len(times) < 2:
+        return None, None
+    times.sort()
+    last = times[-1]
+    return last, sum(1 for t in times if t > last - 1_000_000_000)
+
+
+def parse_fps(text):
+    """Salida de FPS_SCRIPT -> (capas, contador_1013, app_con_foco).
+    capas: [(nombre, ultimo_frame_ns, fps_en_su_ultimo_segundo)] (ultimo/fps None si no da tiempos)."""
+    text = text or ""
+    body, _, flips = text.partition(FPS_FLIP)
+    m = re.search(r"FOCUS=(.*)", body)
+    focus = m.group(1).strip() if m else ""
+    layers = []
+    for block in body.split("LAYER=")[1:]:
+        name, _, rest = block.partition("\n")
+        lat = rest.partition(FPS_LAT)[2].partition(FPS_END)[0]
+        last, fps = _frames(lat)
+        layers.append((name.strip(), last, fps))
     counter = None
     m = re.search(r"Parcel\(\s*([0-9a-fA-F]{8})", flips)
     if m:
         counter = int(m.group(1), 16)
-    return last, fps, counter, layer
+    return layers, counter, focus

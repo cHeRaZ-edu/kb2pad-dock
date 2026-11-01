@@ -19,7 +19,7 @@ import os
 import sys
 import threading
 
-from PyQt6.QtCore import QObject, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -95,6 +95,8 @@ class Hud(QWidget):
             scr = QGuiApplication.primaryScreen().geometry()
             rect = (scr.x(), scr.y(), scr.width(), scr.height())
         x, y, rw, rh = (int(v) for v in rect)
+        scr = (QGuiApplication.screenAt(QPoint(x + rw // 2, y + rh // 2)) or QGuiApplication.primaryScreen()).geometry()
+        rw = min(rw, scr.width())                  # nunca mas ancho que la pantalla
 
         def width(row):
             return sum(fm.horizontalAdvance(t) for t, _c in row)
@@ -121,6 +123,9 @@ class Hud(QWidget):
         corner = msg.get("corner", "tl")
         px = x + MARGIN if corner in ("tl", "bl") else x + rw - w - MARGIN
         py = y + MARGIN if corner in ("tl", "tr") else y + rh - h - MARGIN
+        # dentro de la pantalla aunque la ventana del juego este movida o sea mas chica que el HUD
+        px = max(scr.left(), min(px, scr.left() + scr.width() - w))
+        py = max(scr.top(), min(py, scr.top() + scr.height() - h))
         self.setGeometry(px, py, w, h)
         if not self.isVisible():
             self.show()

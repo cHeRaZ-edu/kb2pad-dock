@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.6.0"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -236,7 +236,7 @@ def guess_icon(name):
     return "letter"
 
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 DEFAULT_CONFIG = {
     "version": CONFIG_VERSION,
@@ -246,10 +246,11 @@ DEFAULT_CONFIG = {
         "alt_blocks": True,          # con Alt presionado no se manda nada al juego
         "hide_cursor": True,         # ocultar el cursor con el mouse como camara
         "chat": "KEY_T",             # Alt + T: modo chat (el teclado deja de ser control)
-        "mode_back": "KEY_Q",        # Alt + Q: sale del chat al modo que tenias (fuera del chat: modo de inicio)
+        "mode_back": "KEY_0",        # Alt + 0: sale del chat al modo que tenias (fuera del chat: modo de inicio)
         "chat_window": True,         # chat activado: la ventana de scrcpy lleva teclado (kb2pad lo bloquea al jugar)
         "chat_keyboard": "uhid",     # uhid = teclado fisico (Android oculta su teclado); sdk = teclado del cel
-        "profile_toggle": "KEY_P",   # Alt + P: alterna entre los dos perfiles de video (reabre la ventana)
+        "profile_toggle": "KEY_L",   # Alt + L: alterna entre los dos perfiles de video (reabre la ventana)
+        "cool_toggle": "KEY_E",      # Alt + E: perfil Enfriar y de regreso al que tenias
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
         "move": ["KEY_W", "KEY_S", "KEY_A", "KEY_D"],
@@ -299,7 +300,8 @@ DEFAULT_CONFIG = {
         "lowlat_mtk": False,                # mtk.ext.venc.scenario.based.sdk.mode=1
         "soc": "",                          # chip detectado (texto)
         "soc_vendor": "",                   # qcom | mtk | exynos | tensor | unisoc | kirin | other
-        "profile_a": "calidad",             # Alt + P alterna entre estos dos perfiles de video
+        "game_fps": 0,                      # limite de FPS del juego con Game Mode de Android (0 = no tocar)
+        "profile_a": "calidad",             # Alt + L alterna entre estos dos perfiles de video
         "profile_b": "maximo",
         "launch_app": True,                 # abre el juego en el cel antes de scrcpy
         "package": "com.garena.game.mho",
@@ -399,6 +401,15 @@ def default_config():
 
 # ---------------------------------------------------------------- modos
 MODE_MODIFIERS = ("KEY_LEFTALT", "KEY_RIGHTALT")   # el atajo de modo es Alt + tecla
+# Atajos de scrcpy con Alt (su tecla MOD): si un atajo de kb2pad usa la misma letra, scrcpy tambien lo hace
+SCRCPY_ALT_KEYS = {
+    "KEY_Q": "cerrar scrcpy", "KEY_P": "boton de encendido", "KEY_O": "apagar pantalla", "KEY_H": "inicio",
+    "KEY_B": "atras", "KEY_S": "apps recientes", "KEY_M": "menu", "KEY_F": "pantalla completa",
+    "KEY_W": "quitar bordes negros", "KEY_G": "tamaño 1:1", "KEY_R": "girar", "KEY_N": "notificaciones",
+    "KEY_C": "copiar", "KEY_X": "cortar", "KEY_V": "pegar", "KEY_I": "contador de FPS", "KEY_K": "ajustes del teclado",
+    "KEY_Z": "pausar la imagen", "KEY_BACKSPACE": "atras", "KEY_UP": "subir volumen", "KEY_DOWN": "bajar volumen",
+    "KEY_LEFT": "girar", "KEY_RIGHT": "girar",
+}
 
 
 def find_mode(cfg, name):
@@ -466,6 +477,16 @@ def _migrate_v4(out):
         sc["rotate_fit"] = "screen" if sc.get("keep_geometry") else "off"
 
 
+def _migrate_v6(out):
+    """v5 -> v6: Alt+Q (cerrar scrcpy) y Alt+P (boton de encendido) chocaban con atajos de scrcpy."""
+    sp = out.get("special")
+    if isinstance(sp, dict):
+        if sp.get("mode_back") == "KEY_Q":
+            sp["mode_back"] = "KEY_0"
+        if sp.get("profile_toggle") == "KEY_P":
+            sp["profile_toggle"] = "KEY_L"
+
+
 def _migrate_v5(out):
     """v4 -> v5: --max-size, --no-audio y --video-encoder pasan de 'argumentos extra' a sus campos."""
     sc = out.get("scrcpy")
@@ -504,6 +525,8 @@ def normalize(data):
         _migrate_v4(out)
     if old_version < 5:
         _migrate_v5(out)
+    if old_version < 6:
+        _migrate_v6(out)
     base = default_config()
     for key, val in base.items():
         if key not in out:
@@ -596,7 +619,8 @@ def validate(cfg):
             use(n, f"especial {label}")
 
     hotkeys, names = {}, set()
-    for k, label in (("chat", "Chat"), ("mode_back", "Volver de modo"), ("profile_toggle", "Perfil de video")):
+    for k, label in (("chat", "Chat"), ("mode_back", "Volver de modo"), ("profile_toggle", "Perfil de video"),
+                     ("cool_toggle", "Perfil Enfriar")):
         hk = cfg["special"].get(k) or ""
         if hk and check(hk, f"Atajo {label}"):
             if hk in hotkeys:
@@ -616,6 +640,11 @@ def validate(cfg):
             if hk in hotkeys:
                 errors.append(f"Alt + {input_label(hk)} es el atajo de '{hotkeys[hk]}' y de '{name}'")
             hotkeys[hk] = name
+
+    for hk, who in hotkeys.items():
+        if hk in SCRCPY_ALT_KEYS:
+            warnings.append(f"Alt + {input_label(hk)} ({who}) tambien es un atajo de scrcpy "
+                            f"({SCRCPY_ALT_KEYS[hk]}); mejor usa otra tecla")
 
     dirs = ("arriba", "abajo", "izquierda", "derecha")
     for sk, label in (("move", "Movimiento"), ("camera", "Camara"), ("dpad", "D-pad")):
@@ -825,18 +854,23 @@ PROFILES = {
     "calidad": ("Mejor calidad",
                 "Se ve muy bien, pero con mas retraso. Para videos, mostrar la pantalla, juegos casuales o que "
                 "no piden reacciones rapidas.",
-                {"codec": "h265", "max_size": 0, "bitrate": "30M"}),
+                {"codec": "h265", "max_size": 0, "bitrate": "30M", "max_fps": 120, "game_fps": 0}),
     "balanceado": ("Balanceado",
                    "Buena imagen con retraso moderado. Para la mayoria de los juegos sin combates exigentes.",
-                   {"codec": "h265", "max_size": 1920, "bitrate": "20M"}),
+                   {"codec": "h265", "max_size": 1920, "bitrate": "20M", "max_fps": 120, "game_fps": 0}),
     "rendimiento": ("Rendimiento",
                     "Menos retraso con buena imagen: h264, 1920 px y 16M, sin opciones avanzadas. Para juegos de "
                     "accion.",
-                    {"codec": "h264", "max_size": 1920, "bitrate": "16M"}),
+                    {"codec": "h264", "max_size": 1920, "bitrate": "16M", "max_fps": 120, "game_fps": 0}),
     "maximo": ("Maximo rendimiento",
                "El menor retraso: h264, 1920 px, 8M, codificador de hardware y las optimizaciones del codificador "
                "de tu chip. El celular trabaja mas y se calienta mas.",
-               {"codec": "h264", "max_size": 1920, "bitrate": "8M"}),
+               {"codec": "h264", "max_size": 1920, "bitrate": "8M", "max_fps": 120, "game_fps": 0}),
+    "enfriar": ("Enfriar (bajo consumo)",
+                "Para bajar la temperatura: video ligero (h264, 1280 px, 6M, 30 FPS) y le pide a Android que limite "
+                "el juego a 30 FPS (Game Mode, Android 13+; algunos celulares o juegos no lo respetan). Se ve menos "
+                "nitido y menos fluido. Al cambiar de perfil o cerrar el juego, el limite se quita.",
+                {"codec": "h264", "max_size": 1280, "bitrate": "6M", "max_fps": 30, "game_fps": 30}),
 }
 PROFILE_RISKY = {"maximo"}
 

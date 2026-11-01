@@ -276,6 +276,7 @@ class Hooks(threading.Thread):
         self.kdown = set()
         self.kblocked = set()             # teclas cuyo "down" se trago el escudo (su "up" tambien)
         self.shield = False               # lo cambia el hilo principal: jugando (no chat, no pausa)
+        self.alt_hotkeys = frozenset()    # atajos de kb2pad con Alt: nunca llegan a scrcpy
         self._fg_cache = {}
         self.passed_down = set()          # botones cuyo "down" paso a Windows
         self.wheel_acc = {WM_MOUSEWHEEL: 0, WM_MOUSEHWHEEL: 0}   # acumula ruedas de alta resolucion
@@ -323,8 +324,8 @@ class Hooks(threading.Thread):
                             if code not in self.kdown:
                                 # escudo: jugando, las teclas no llegan a scrcpy (y por lo tanto al celular)
                                 mods = any(m in self.kdown for m in PASS_MODS)
-                                if (self.shield and code not in PASS_MODS and not mods
-                                        and self._fg_is_scrcpy()):
+                                if code not in PASS_MODS and self._fg_is_scrcpy() and (
+                                        (self.shield and not mods) or (mods and code in self.alt_hotkeys)):
                                     self.kblocked.add(code)
                                 self.kdown.add(code)
                                 self.q.put(("key", code, 1))
@@ -689,6 +690,7 @@ def main(argv=None):
                         log("Debug de teclas " + ("activado" if mapper.debug else "desactivado"))
 
             hooks.shield = mapper.enabled and not mapper.chat
+            hooks.alt_hotkeys = mapper.cfg.alt_hotkeys if mapper.enabled else frozenset()
 
             # si en 40 ms no llego Raw Input con el mouse capturado, el respaldo es el hook
             if rel.mode == "?" and rel.pending_t is not None and time.monotonic() - rel.pending_t > 0.04:

@@ -64,7 +64,7 @@ flowchart LR
   la sostienes.
 - **Cambios en caliente**: guardas y el control aplica el mapeo al momento, sin reiniciar.
 - **Modo chat** (`Alt + T`): el teclado deja de ser control y escribe en el celular; el mouse
-  sigue igual. Regresas con `Alt + 1/2/3` o `Alt + Q`.
+  sigue igual. Regresas con `Alt + 1/2/3` o `Alt + 0`.
 - **Lanza el juego por ti**: al iniciar te pregunta si abrir una app (con buscador entre las apps
   instaladas) o solo mostrar la pantalla. Espera a que el celular gire a horizontal y abre la
   ventana sin bordes.
@@ -74,8 +74,8 @@ flowchart LR
 - **Menos retraso de video**: elige el codificador del celular, la resolución máxima y, opcional,
   las opciones de baja latencia de cada fabricante (Qualcomm, MediaTek...) con un botón que detecta
   tu chip.
-- **Perfiles de video** (Mejor calidad, Balanceado, Rendimiento, Máximo rendimiento) y `Alt + P`
-  para alternar entre dos en plena partida.
+- **Perfiles de video** (Mejor calidad, Balanceado, Rendimiento, Máximo rendimiento y Enfriar),
+  `Alt + L` para alternar entre dos en plena partida y `Alt + E` para enfriar el celular.
 - **Temperatura del celular**: HUD encima del juego configurable (temperatura, batería, FPS del juego y
   del video, procesador, GPU, modelo, perfil y modo; vertical u horizontal; varios estilos de color);
   icono con la temperatura en la bandeja; notificación al llegar a crítico y, en peligro, cierra la
@@ -109,8 +109,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.5.2-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.5.2-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.6.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.6.0-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -160,8 +160,9 @@ Monster Hunter Outlanders, como ejemplo. En los combos (`LT + B`), el primer bot
 | `F12` | Pausar o reanudar kb2pad | Para escribir en otras apps |
 | `Bloq Mayús` | Mouse como cámara sí/no | |
 | `Alt + T` | Modo chat (el teclado escribe en el celular) | Chat del juego |
-| `Alt + Q` | Volver: del chat al modo que tenías; fuera del chat, al modo de inicio | |
-| `Alt + P` | Alternar entre dos perfiles de video (la ventana del juego se reabre) | Explorar con calidad, pelear con rendimiento |
+| `Alt + 0` | Volver: del chat al modo que tenías; fuera del chat, al modo de inicio | |
+| `Alt + L` | Alternar entre dos perfiles de video (la ventana del juego se reabre) | Explorar con calidad, pelear con rendimiento |
+| `Alt + E` | Perfil **Enfriar**; otra vez, regresa al perfil que tenías | Cuando el celular se calienta |
 
 \* El click izquierdo y la rueda solo cuentan como botón con el mouse en modo cámara. Fuera de
 ese modo, el mouse funciona normal en la ventana (clics y scroll en los menús). Cada muesca de la
@@ -200,7 +201,7 @@ Para escribir en el chat del juego sin que las letras disparen botones:
 1. Abre el chat en el juego (con el mouse o con su botón).
 2. Presiona **`Alt + T`**. El icono de la bandeja cambia a un **teclado** y lo que escribes llega
    al celular. El mouse sigue funcionando como control.
-3. Para volver a jugar: **`Alt + 1/2/3`** (ese modo) o **`Alt + Q`** (el modo que tenías).
+3. Para volver a jugar: **`Alt + 1/2/3`** (ese modo) o **`Alt + 0`** (el modo que tenías).
 
 Se escribe en la **misma ventana del juego**. scrcpy la abre con teclado, y el celular lo ve como un
 **teclado físico**, así que Android **no muestra su teclado en pantalla**. Mientras juegas, kb2pad se
@@ -288,13 +289,20 @@ Arriba de la sección *Video* eliges un perfil y llena los campos de un jalón:
 | **Balanceado** | h265, 1920 px, 20M | La mayoría de los juegos sin combates exigentes |
 | **Rendimiento** | h264, 1920 px, 16M, sin opciones avanzadas | Juegos de acción |
 | **Máximo rendimiento** ⚠ | h264, 1920 px, 8M, codificador de hardware y las optimizaciones de tu chip | El menor retraso; el celular trabaja y se calienta más |
+| **Enfriar (bajo consumo)** | h264, 1280 px, 6M, video a 30 FPS y **limita el juego a 30 FPS** | Bajar la temperatura; se ve menos nítido y menos fluido |
 
-`Alt + P` alterna entre dos perfiles que eliges (por defecto Mejor calidad y Máximo rendimiento).
+**Enfriar** (`Alt + E`): además de aligerar el video, le pide a Android que limite el juego a 30 FPS
+con Game Mode (modo batería, Android 13+), que es lo que más baja el calor. Algunos celulares o juegos
+no lo respetan; lo ves en *JUEGO* del HUD. El límite se quita al cambiar de perfil, al cerrar el juego
+o la app, y regresa lo que hubiera antes. También puedes poner el límite en cualquier perfil con
+*Limitar FPS del juego* en la pestaña Juego.
+
+`Alt + L` alterna entre dos perfiles que eliges (por defecto Mejor calidad y Máximo rendimiento).
 Con el juego abierto, la ventana se reabre (2–3 s en negro; el juego sigue en el celular).
 
 **Advertencia de seguridad**: la primera vez en cada sesión que activas Máximo rendimiento o las
 opciones del codificador, sale una advertencia que no se puede aceptar hasta pasados 8 segundos.
-Después, en esa misma sesión, ya no interrumpe (para que `Alt + P` no te pare en un combate).
+Después, en esa misma sesión, ya no interrumpe (para que `Alt + L` no te pare en un combate).
 
 ![Advertencia](docs/img/dialogo-advertencia.png)
 
@@ -345,6 +353,11 @@ calidad del video.
 ![Pestaña Temperatura y HUD](docs/img/linux-temperatura.png)
 
 ## Notas
+
+- **Atajos con Alt**: scrcpy también usa Alt para los suyos (`Alt + Q` cierra scrcpy, `Alt + P` es el
+  botón de encendido, `Alt + O` apaga la pantalla...). Por eso los de kb2pad son `Alt + 0`, `Alt + L` y
+  `Alt + E`, y la app avisa si eliges una letra que choca. Mientras juegas, kb2pad no deja que sus
+  propios atajos lleguen a scrcpy.
 
 - **No modifica el juego** ni inyecta toques: solo hay un control conectado. Aun así, evita
   macros o automatizar acciones en juegos en línea.

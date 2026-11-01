@@ -62,6 +62,7 @@ class KeyboardShield:
 
     def __init__(self, keyboards):
         self.kbds = list(keyboards)
+        self.alt_hotkeys = frozenset()     # atajos de kb2pad con Alt: no se reenvian a scrcpy
         self.grabbed = False
         self.held = set()          # teclas fisicas presionadas ahora
         self.vpressed = set()      # teclas que el teclado virtual tiene presionadas
@@ -83,7 +84,7 @@ class KeyboardShield:
         if ev.value == 1:
             mods = any(m in self.held for m in PASS_MODS)
             self.held.add(ev.code)
-            if self.grabbed and (ev.code in PASS_MODS or mods):
+            if self.grabbed and (ev.code in PASS_MODS or (mods and ev.code not in self.alt_hotkeys)):
                 self._emit(ev.code, 1)
         elif ev.value == 0:
             self.held.discard(ev.code)
@@ -287,6 +288,7 @@ def main(argv=None):
                         shield.key(dev, ev)
                     mapper.handle(dev, ev)
 
+            shield.alt_hotkeys = mapper.cfg.alt_hotkeys
             shield.update(game_focused and mapper.enabled and not mapper.chat)
 
             now = time.monotonic()

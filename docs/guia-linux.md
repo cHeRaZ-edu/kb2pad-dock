@@ -46,10 +46,10 @@ control.
 
 2. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.5.2-linux.tar.gz` y descomprímelo:
+   `kb2pad-dock-v0.6.0-linux.tar.gz` y descomprímelo:
    ```fish
    mkdir -p ~/Apps
-   tar xzf ~/Descargas/kb2pad-dock-v0.5.2-linux.tar.gz -C ~/Apps
+   tar xzf ~/Descargas/kb2pad-dock-v0.6.0-linux.tar.gz -C ~/Apps
    ```
    O clona el repo:
    ```fish
@@ -119,7 +119,7 @@ puedes editar `~/.config/kb2pad/config.json` a mano: el control detecta el cambi
 5. **Chat**: abre el chat en el juego y presiona **Alt + T**. El icono de la bandeja cambia a un
    teclado: lo que escribes en la ventana del juego llega al celular y las letras ya no disparan
    botones; el mouse sigue funcionando. Android no saca su teclado en pantalla porque la ventana
-   se conecta como teclado físico. Para volver: **Alt + 1/2/3** o **Alt + Q** (regresa al modo que
+   se conecta como teclado físico. Para volver: **Alt + 1/2/3** o **Alt + 0** (regresa al modo que
    tenías). Mientras juegas, kb2pad no deja que las teclas lleguen al celular.
    - **La primera vez**, con el juego abierto, pulsa **Idioma del teclado en el celular...** en
      *Sticks y teclas especiales* y en el celular elige el teclado **scrcpy** → *Español
@@ -148,7 +148,9 @@ hardware. Para ir más allá está *Optimización del codificador (avanzado)* co
 (ver el [README](../README.md#bajar-el-retraso-del-video)).
 
 **Perfiles y temperatura**: en *Video* eliges un perfil (Mejor calidad, Balanceado, Rendimiento o
-Máximo rendimiento) y con **Alt + P** alternas entre dos en plena partida. Mientras juegas, kb2pad
+Máximo rendimiento o Enfriar) y con **Alt + L** alternas entre dos en plena partida. Si el celular se
+calienta, **Alt + E** pone el perfil Enfriar (video ligero y el juego limitado a 30 FPS) y otra vez
+regresa al que tenías. Mientras juegas, kb2pad
 lee la temperatura del celular: la ves en el HUD encima del juego (donde también puedes poner los FPS
 del juego, la batería, el procesador, la GPU y el modelo, con el orden, estilo y colores que quieras),
 en la barra de la app y en un icono de la bandeja; te avisa con una notificación al llegar a crítico y, en peligro, cierra la

@@ -121,6 +121,15 @@ _sig(user32.GetMonitorInfoW, W.BOOL, W.HANDLE, POINTER(MONITORINFO))
 _sig(kernel32.GetModuleHandleW, W.HMODULE, W.LPCWSTR)
 _sig(kernel32.GetCurrentThreadId, W.DWORD)
 _sig(kernel32.GetStdHandle, W.HANDLE, W.DWORD)
+_sig(user32.GetForegroundWindow, W.HWND)
+_sig(user32.GetWindowThreadProcessId, W.DWORD, W.HWND, POINTER(W.DWORD))
+_sig(kernel32.OpenProcess, W.HANDLE, W.DWORD, W.BOOL, W.DWORD)
+_sig(kernel32.QueryFullProcessImageNameW, W.BOOL, W.HANDLE, W.DWORD, W.LPWSTR, POINTER(W.DWORD))
+_sig(kernel32.CloseHandle, W.BOOL, W.HANDLE)
+
+# Teclas que siempre pasan a Windows aunque el escudo este activo (Alt+Tab, Alt+O de scrcpy, tecla Win).
+# Con Alt presionado scrcpy no le manda nada al celular, solo usa sus atajos.
+PASS_MODS = frozenset((e.KEY_LEFTALT, e.KEY_RIGHTALT, e.KEY_LEFTMETA, e.KEY_RIGHTMETA))
 
 
 _MOUSE_BTN = {
@@ -265,6 +274,9 @@ class Hooks(threading.Thread):
         self.grab_active = False          # lo cambia MouseGrab desde el hilo principal
         self.anchor = (0, 0)
         self.kdown = set()
+        self.kblocked = set()             # teclas cuyo "down" se trago el escudo (su "up" tambien)
+        self.shield = False               # lo cambia el hilo principal: jugando (no chat, no pausa)
+        self._fg_cache = {}
         self.passed_down = set()          # botones cuyo "down" paso a Windows
         self.wheel_acc = {WM_MOUSEWHEEL: 0, WM_MOUSEHWHEEL: 0}   # acumula ruedas de alta resolucion
         self.tid = None
@@ -275,8 +287,32 @@ class Hooks(threading.Thread):
         self._wndproc = WNDPROC(self._wnd_proc)
         self._rawbuf = ctypes.create_string_buffer(256)
 
+    def _fg_is_scrcpy(self):
+        """True si la ventana con el foco es de scrcpy.exe (con cache por ventana)."""
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        v = self._fg_cache.get(hwnd)
+        if v is None:
+            pid = W.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, byref(pid))
+            name = ""
+            h = kernel32.OpenProcess(0x1000, False, pid.value)      # PROCESS_QUERY_LIMITED_INFORMATION
+            if h:
+                buf = ctypes.create_unicode_buffer(520)
+                size = W.DWORD(520)
+                if kernel32.QueryFullProcessImageNameW(h, 0, buf, byref(size)):
+                    name = buf.value
+                kernel32.CloseHandle(h)
+            v = os.path.basename(name).lower() == "scrcpy.exe"
+            if len(self._fg_cache) > 64:
+                self._fg_cache.clear()
+            self._fg_cache[hwnd] = v
+        return v
+
     # --- callbacks (rapidos: nunca deben lanzar excepcion) ---
     def _kb_proc(self, n, wparam, lparam):
+        block = False
         try:
             if n == 0:
                 k = ctypes.cast(lparam, POINTER(KBDLLHOOKSTRUCT)).contents
@@ -285,13 +321,23 @@ class Hooks(threading.Thread):
                     if code:
                         if wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
                             if code not in self.kdown:
+                                # escudo: jugando, las teclas no llegan a scrcpy (y por lo tanto al celular)
+                                mods = any(m in self.kdown for m in PASS_MODS)
+                                if (self.shield and code not in PASS_MODS and not mods
+                                        and self._fg_is_scrcpy()):
+                                    self.kblocked.add(code)
                                 self.kdown.add(code)
                                 self.q.put(("key", code, 1))
+                            block = code in self.kblocked
                         elif wparam in (WM_KEYUP, WM_SYSKEYUP):
                             self.kdown.discard(code)
+                            block = code in self.kblocked
+                            self.kblocked.discard(code)
                             self.q.put(("key", code, 0))
         except Exception:  # noqa: BLE001
             pass
+        if block:
+            return 1
         return user32.CallNextHookEx(None, n, wparam, lparam)
 
     def _ms_proc(self, n, wparam, lparam):
@@ -556,6 +602,7 @@ def main(argv=None):
     mouse = MouseGrab(hooks, reset_rel)
     keyboard = types.SimpleNamespace(name="teclado")
     mapper = Mapper(pad, [mouse], cfg, debug=args.debug)
+    hooks.shield = True
     threading.Thread(target=_stdin_reader, args=(events,), daemon=True).start()
 
     log(f"Config: {path}")
@@ -640,6 +687,8 @@ def main(argv=None):
                     elif cmd in ("debug on", "debug off"):
                         mapper.debug = cmd.endswith("on")
                         log("Debug de teclas " + ("activado" if mapper.debug else "desactivado"))
+
+            hooks.shield = mapper.enabled and not mapper.chat
 
             # si en 40 ms no llego Raw Input con el mouse capturado, el respaldo es el hook
             if rel.mode == "?" and rel.pending_t is not None and time.monotonic() - rel.pending_t > 0.04:

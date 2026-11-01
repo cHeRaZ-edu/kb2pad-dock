@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -247,7 +247,7 @@ DEFAULT_CONFIG = {
         "hide_cursor": True,         # ocultar el cursor con el mouse como camara
         "chat": "KEY_T",             # Alt + T: modo chat (el teclado deja de ser control)
         "mode_back": "KEY_Q",        # Alt + Q: sale del chat al modo que tenias (fuera del chat: modo de inicio)
-        "chat_window": True,         # al entrar al chat abre una ventanita (invisible) de scrcpy para escribir
+        "chat_window": True,         # chat activado: la ventana de scrcpy lleva teclado (kb2pad lo bloquea al jugar)
         "chat_keyboard": "uhid",     # uhid = teclado fisico (Android oculta su teclado); sdk = teclado del cel
     },
     "sticks": {   # (arriba, abajo, izquierda, derecha)
@@ -551,7 +551,7 @@ def validate(cfg):
 
 
 # ---------------------------------------------------------------- scrcpy
-SCRCPY_FIXED = ["--keyboard=disabled", "--mouse=sdk", "--mouse-bind=----:----", "--gamepad=uhid"]
+SCRCPY_FIXED = ["--mouse=sdk", "--mouse-bind=----:----", "--gamepad=uhid"]
 
 
 def tool_path(sc, name):
@@ -587,7 +587,7 @@ def effective_serial(sc):
     return (sc.get("serial") or "").strip()
 
 
-def build_scrcpy_cmd(sc, window=None, version=None):
+def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled"):
     """window: (x, y, w, h) para abrir la ventana ahi (si no, la posicion fija si esta activada).
     version: (mayor, menor) de scrcpy; desde la 4.0 la ventana guarda la proporcion del video y no
     deja ocupar toda la pantalla si no se le quita ese candado."""
@@ -595,7 +595,7 @@ def build_scrcpy_cmd(sc, window=None, version=None):
     serial = effective_serial(sc)
     if serial:
         cmd += ["-s", serial]
-    cmd += SCRCPY_FIXED
+    cmd += [f"--keyboard={keyboard}"] + SCRCPY_FIXED
     cmd += [f"--video-codec={sc['codec']}",
             f"--video-bit-rate={sc['bitrate']}",
             f"--max-fps={int(sc['max_fps'])}"]
@@ -617,25 +617,17 @@ def build_scrcpy_cmd(sc, window=None, version=None):
     return cmd + extra
 
 
-CHAT_TITLE = "kb2pad-chat"
 CHAT_KEYBOARDS = {"uhid": "Teclado fisico: Android oculta su teclado (recomendado)",
                   "sdk": "Teclado del celular en pantalla"}
 
 
-def build_chat_cmd(sc, window=None, keyboard="uhid"):
-    """Segunda ventana de scrcpy solo con teclado (sin video ni audio) para escribir en el chat.
-    La ventana es diminuta y la GUI la vuelve transparente: solo esta para recibir el teclado."""
-    cmd = [tool_path(sc, "scrcpy")]
-    serial = effective_serial(sc)
-    if serial:
-        cmd += ["-s", serial]
-    keyboard = keyboard if keyboard in CHAT_KEYBOARDS else "uhid"
-    cmd += ["--no-video", "--no-audio", f"--keyboard={keyboard}", "--mouse=disabled",
-            "--window-borderless", "--always-on-top", f"--window-title={CHAT_TITLE}"]
-    if window is not None:
-        x, y, w, h = (int(v) for v in window)
-        cmd += [f"--window-x={x}", f"--window-y={y}", f"--window-width={w}", f"--window-height={h}"]
-    return cmd
+def scrcpy_keyboard(special, shield_ok=True):
+    """Teclado de la ventana de scrcpy. Con el chat activado lleva teclado (uhid o sdk) y kb2pad se
+    traga las teclas mientras juegas; si no se puede proteger (o el chat esta apagado), sin teclado."""
+    kb = (special or {}).get("chat_keyboard", "uhid")
+    if not (special or {}).get("chat_window", True) or not shield_ok or kb not in CHAT_KEYBOARDS:
+        return "disabled"
+    return kb
 
 
 def wayland_session():
@@ -643,8 +635,9 @@ def wayland_session():
                                or bool(os.environ.get("WAYLAND_DISPLAY")))
 
 
-def scrcpy_env_overrides(sc):
-    """X11 si se pide, o si hay que acomodar la ventana en Wayland (xdotool no ve ventanas Wayland).
-    SDL3 (scrcpy 3.3+) lee SDL_VIDEO_DRIVER; SDL2 lee SDL_VIDEODRIVER."""
-    x11 = sc.get("force_x11") or (wayland_session() and sc.get("rotate_fit", "screen") != "off")
+def scrcpy_env_overrides(sc, keyboard="disabled"):
+    """X11 si se pide, o en Wayland si hay que acomodar la ventana o saber si tiene el foco (escudo del
+    teclado): xdotool no ve ventanas Wayland. SDL3 (scrcpy 3.3+) lee SDL_VIDEO_DRIVER; SDL2 SDL_VIDEODRIVER."""
+    x11 = sc.get("force_x11") or (wayland_session() and (sc.get("rotate_fit", "screen") != "off"
+                                                         or keyboard != "disabled"))
     return {"SDL_VIDEODRIVER": "x11", "SDL_VIDEO_DRIVER": "x11"} if x11 else {}

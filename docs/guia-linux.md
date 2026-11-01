@@ -45,10 +45,10 @@ control.
 
 2. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.2.1-linux.tar.gz` y descomprímelo:
+   `kb2pad-dock-v0.2.2-linux.tar.gz` y descomprímelo:
    ```fish
    mkdir -p ~/Apps
-   tar xzf ~/Descargas/kb2pad-dock-v0.2.1-linux.tar.gz -C ~/Apps
+   tar xzf ~/Descargas/kb2pad-dock-v0.2.2-linux.tar.gz -C ~/Apps
    ```
    O clona el repo:
    ```fish
@@ -116,13 +116,13 @@ puedes editar `~/.config/kb2pad/config.json` a mano: el control detecta el cambi
    teclado aunque la ventana del juego no tenga el foco. `Alt + Tab` no manda nada al juego.
 
 5. **Chat**: abre el chat en el juego y presiona **Alt + T**. El icono de la bandeja cambia a un
-   teclado: lo que escribes llega al celular y las letras ya no disparan botones; el mouse sigue
-   funcionando. Android no saca su teclado en pantalla porque kb2pad se conecta como teclado
-   físico. Para volver: **Alt + 1/2/3** o **Alt + Q** (regresa al modo que tenías).
-   - **La primera vez**, con el chat activo, pulsa **Idioma del teclado en el celular...** en
+   teclado: lo que escribes en la ventana del juego llega al celular y las letras ya no disparan
+   botones; el mouse sigue funcionando. Android no saca su teclado en pantalla porque la ventana
+   se conecta como teclado físico. Para volver: **Alt + 1/2/3** o **Alt + Q** (regresa al modo que
+   tenías). Mientras juegas, kb2pad no deja que las teclas lleguen al celular.
+   - **La primera vez**, con el juego abierto, pulsa **Idioma del teclado en el celular...** en
      *Sticks y teclas especiales* y en el celular elige el teclado **scrcpy** → *Español
      (Latinoamérica)*, para que salgan la `ñ` y los acentos.
-   - Si haces clic en el juego mientras escribes, presiona **Alt + T** otra vez para seguir.
    - En el chat solo cuenta el Alt izquierdo (`AltGr + Q` escribe `@`).
 
 **Wayland:** para poder acomodar la ventana, la app abre scrcpy con X11 (XWayland) mientras *Al
@@ -206,6 +206,7 @@ sudo python ~/Apps/kb2pad-dock/engine.py --config ~/.config/kb2pad/config.json -
 | El juego no reacciona al teclado | Revisa que el control esté **activo** (no en pausa con F12) y que el juego muestre íconos de control. scrcpy debe ser 2.7 o más reciente. |
 | Los botones laterales del mouse no hacen nada | Activa *Mostrar teclas en el log*, presiónalos y mira qué código aparece. Asígnalo en la pestaña Botones con *Capturar*. |
 | "No encontré la ventana de scrcpy" en el log | Instala `xdotool` y, en Wayland, activa *Forzar X11*. |
-| En el chat no se escribe nada | Tiene que estar abierta la ventana del juego y activado *Mandar lo que escribo al celular* en *Sticks y teclas especiales*. Si hiciste clic en el juego, presiona Alt + T otra vez. |
-| En el chat salen símbolos en vez de `ñ` o acentos | Falta el idioma del teclado *scrcpy* en el celular: botón *Idioma del teclado en el celular...* con el chat activo. |
+| En el chat no se escribe nada | Activa *Mandar lo que escribo al celular* en *Sticks y teclas especiales* y vuelve a abrir el juego (el teclado se pone al abrir la ventana). En Linux instala `xdotool`. |
+| Jugando, las teclas hacen cosas raras en el celular | Desactiva *Mandar lo que escribo al celular* y vuelve a abrir el juego, y abre un issue en el repo con lo que pasó. |
+| En el chat salen símbolos en vez de `ñ` o acentos | Falta el idioma del teclado *scrcpy* en el celular: botón *Idioma del teclado en el celular...* con el juego abierto. |
 | En red no conecta | Celular y PC en la misma red. Si el celular se reinició, conecta el cable y usa *Activar red con el cable* otra vez. |

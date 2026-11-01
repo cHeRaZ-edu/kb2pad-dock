@@ -100,8 +100,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.2.1-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.2.1-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.2.2-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.2.2-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -192,16 +192,18 @@ Para escribir en el chat del juego sin que las letras disparen botones:
    al celular. El mouse sigue funcionando como control.
 3. Para volver a jugar: **`Alt + 1/2/3`** (ese modo) o **`Alt + Q`** (el modo que tenías).
 
-Por dentro, kb2pad abre una segunda conexión de scrcpy, solo de teclado, en una ventana invisible
-que toma el foco. Esa conexión se presenta en el celular como un **teclado físico**, así que
-Android **no muestra su teclado en pantalla** y el juego queda despejado.
+Se escribe en la **misma ventana del juego**. scrcpy la abre con teclado, y el celular lo ve como un
+**teclado físico**, así que Android **no muestra su teclado en pantalla**. Mientras juegas, kb2pad se
+traga las teclas antes de que lleguen a esa ventana: solo pasan en el chat y con `Alt` presionado
+(`Alt + Tab`, `Alt + O`; con Alt, scrcpy no le manda nada al celular). En otras ventanas escribes
+normal.
 
-- **La primera vez**, configura el idioma de ese teclado para que salgan la `ñ` y los acentos:
-  entra al chat (`Alt + T`) y en *Sticks y teclas especiales* pulsa **Idioma del teclado en el
-  celular...**. En el celular elige el teclado **scrcpy** → *Español (Latinoamérica)* (o el de tu
-  teclado). Se queda guardado.
-- Si haces clic en el juego mientras escribes, vuelve a presionar `Alt + T` para seguir escribiendo.
+- **La primera vez**, con el juego abierto, en *Sticks y teclas especiales* pulsa **Idioma del
+  teclado en el celular...** y en el celular elige el teclado **scrcpy** → *Español
+  (Latinoamérica)* (o el de tu teclado), para que salgan la `ñ` y los acentos.
 - Si prefieres el teclado del celular en pantalla, cámbialo en *Teclado* (misma pestaña).
+- En Linux necesita `xdotool` (para saber cuándo el juego tiene el foco); sin él, la ventana se abre
+  sin teclado y el chat no escribe.
 - En el chat solo cuenta el **Alt izquierdo**, porque `AltGr + Q` escribe `@`.
 
 ## Iniciar el juego

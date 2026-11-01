@@ -8,7 +8,8 @@ en caliente cuando el archivo cambia, sin soltar el control virtual.
 Normalmente lo lanza app.py. Para usarlo solo:
     sudo python engine.py --config ~/.config/kb2pad/config.json [--debug]
 
-Comandos por stdin (uno por linea): reload | debug on | debug off | quit
+Comandos por stdin (uno por linea): reload | debug on | debug off | focus on | focus off | quit
+("focus on" = la ventana del juego tiene el foco: la GUI lo avisa para activar el escudo del teclado)
 Si stdin es una tuberia y se cierra, el motor termina (asi la GUI lo apaga aunque corra como root).
 """
 import argparse
@@ -44,6 +45,88 @@ def build_pad():
 def has_rel_xy(dev):
     rel = dev.capabilities().get(e.EV_REL, [])
     return e.REL_X in rel and e.REL_Y in rel
+
+
+def has_keyboard(dev):
+    return any(1 <= c < 0x100 for c in dev.capabilities().get(e.EV_KEY, []))
+
+
+PASS_MODS = frozenset((e.KEY_LEFTALT, e.KEY_RIGHTALT, e.KEY_LEFTMETA, e.KEY_RIGHTMETA))
+
+
+class KeyboardShield:
+    """Mientras juegas con la ventana del juego enfocada, las teclas no deben llegar a scrcpy
+    (que tiene el teclado activo para el chat). Se 'agarran' los teclados (EVIOCGRAB) y solo se
+    reenvian por un teclado virtual Alt/Super y lo que se presione con ellos: Alt+Tab, Alt+O de scrcpy
+    y los atajos de kb2pad siguen funcionando (con Alt, scrcpy no le manda nada al celular)."""
+
+    def __init__(self, keyboards):
+        self.kbds = list(keyboards)
+        self.grabbed = False
+        self.held = set()          # teclas fisicas presionadas ahora
+        self.vpressed = set()      # teclas que el teclado virtual tiene presionadas
+        self.vkbd = None
+        try:
+            keys = sorted(c for c in e.KEY if 1 <= c < 0x100)
+            self.vkbd = UInput({e.EV_KEY: keys}, name="kb2pad passthrough keyboard")
+        except OSError as exc:
+            log(f"Aviso: sin teclado virtual de paso ({exc}); el escudo del teclado queda apagado")
+
+    def remove(self, dev):
+        if dev in self.kbds:
+            self.kbds.remove(dev)
+
+    def key(self, dev, ev):
+        """Evento de un teclado (antes de pasarlo al mapper)."""
+        if dev not in self.kbds:
+            return
+        if ev.value == 1:
+            mods = any(m in self.held for m in PASS_MODS)
+            self.held.add(ev.code)
+            if self.grabbed and (ev.code in PASS_MODS or mods):
+                self._emit(ev.code, 1)
+        elif ev.value == 0:
+            self.held.discard(ev.code)
+            if ev.code in self.vpressed:
+                self._emit(ev.code, 0)
+        elif ev.value == 2 and ev.code in self.vpressed:
+            self._emit(ev.code, 2)
+
+    def _emit(self, code, value):
+        if self.vkbd is None:
+            return
+        self.vkbd.write(e.EV_KEY, code, value)
+        self.vkbd.syn()
+        if value == 1:
+            self.vpressed.add(code)
+        elif value == 0:
+            self.vpressed.discard(code)
+
+    def update(self, want):
+        want = bool(want) and self.vkbd is not None
+        if want and not self.grabbed:
+            if self.held:
+                return             # esperar a que sueltes todo, si no el escritorio se queda con teclas pegadas
+            for d in self.kbds:
+                try:
+                    d.grab()
+                except OSError:
+                    pass
+            self.grabbed = True
+        elif not want and self.grabbed:
+            for d in self.kbds:
+                try:
+                    d.ungrab()
+                except OSError:
+                    pass
+            for code in list(self.vpressed):
+                self._emit(code, 0)
+            self.grabbed = False
+
+    def close(self):
+        self.update(False)
+        if self.vkbd is not None:
+            self.vkbd.close()
 
 
 def find_devices():
@@ -132,6 +215,8 @@ def main(argv=None):
     log("ACTIVO")
 
     mapper = Mapper(ui, mice, cfg, debug=args.debug)
+    shield = KeyboardShield(d for d in devs if has_keyboard(d) and not has_rel_xy(d))
+    game_focused = False
     fds = {d.fd: d for d in devs}
     cmds = StdinCommands()
     try:
@@ -182,6 +267,8 @@ def main(argv=None):
                         elif cmd in ("debug on", "debug off"):
                             mapper.debug = cmd.endswith("on")
                             log("Debug de teclas " + ("activado" if mapper.debug else "desactivado"))
+                        elif cmd in ("focus on", "focus off"):
+                            game_focused = cmd.endswith("on")
                     continue
                 dev = fds.get(fd)
                 if dev is None:
@@ -193,9 +280,14 @@ def main(argv=None):
                     del fds[fd]
                     if dev in mice:
                         mice.remove(dev)
+                    shield.remove(dev)
                     continue
                 for ev in events:
+                    if ev.type == e.EV_KEY:
+                        shield.key(dev, ev)
                     mapper.handle(dev, ev)
+
+            shield.update(game_focused and mapper.enabled and not mapper.chat)
 
             now = time.monotonic()
             if now - last_mtime_check >= 0.5:
@@ -209,6 +301,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        shield.close()
         mapper.release_all()
         mapper.mouselook = False
         mapper.update_grab()

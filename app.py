@@ -707,13 +707,13 @@ class SticksTab(QWidget):
         form = QFormLayout(box)
         self.chat = KeyField(allow_empty=True)
         self.mode_back = KeyField(allow_empty=True)
-        self.chat_window = QCheckBox("Mandar lo que escribo al celular (abre una ventana invisible de scrcpy)")
+        self.chat_window = QCheckBox("Mandar lo que escribo al celular (la ventana del juego lleva teclado)")
         self.chat_keyboard = QComboBox()
         for key, label in C.CHAT_KEYBOARDS.items():
             self.chat_keyboard.addItem(label, key)
         kb_layout = QPushButton("Idioma del teclado en el celular...")
-        kb_layout.setToolTip("Abre en el celular Ajustes > Teclado fisico. Hazlo con el chat activo (Alt+T) "
-                             "y elige el teclado 'scrcpy' > Español (Latinoamerica) o el de tu teclado.")
+        kb_layout.setToolTip("Abre en el celular Ajustes > Teclado fisico (con el juego abierto). "
+                             "Elige el teclado 'scrcpy' > Español (Latinoamerica) o el de tu teclado.")
         kb_layout.clicked.connect(self.keyboard_settings.emit)
         for f in (self.chat, self.mode_back):
             f.changed.connect(self.changed.emit)
@@ -728,10 +728,10 @@ class SticksTab(QWidget):
         form.addRow("Teclado:", row)
         hint = QLabel("En el chat el teclado deja de ser control (el mouse sigue igual) y lo que escribes "
                       "llega al celular. Se sale con Alt + el atajo de un modo (Alt+1, Alt+2...) o con "
-                      "'Volver al modo', que regresa al modo que tenias. Si haces clic en el juego mientras "
-                      "escribes, presiona Alt+T otra vez para seguir escribiendo. Con 'Teclado fisico', la "
-                      "primera vez configura el idioma (boton de arriba, con el chat activo) para que salgan "
-                      "la ñ y los acentos. En el chat solo cuenta el Alt izquierdo (AltGr escribe @).")
+                      "'Volver al modo', que regresa al modo que tenias. Mientras juegas, kb2pad no deja que las "
+                      "teclas lleguen al celular. Con 'Teclado fisico', la primera vez configura el idioma "
+                      "(boton de arriba, con el juego abierto) para que salgan la ñ y los acentos. En el chat "
+                      "solo cuenta el Alt izquierdo (AltGr escribe @). Cambiar esto aplica al abrir el juego.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: gray;")
         form.addRow(hint)
@@ -882,6 +882,7 @@ class MouseTab(QWidget):
 class ScrcpyTab(QWidget):
     changed = pyqtSignal()
     log = pyqtSignal(str)
+    keyboard_mode = "disabled"        # lo pone la ventana principal (depende del chat)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1088,8 +1089,8 @@ class ScrcpyTab(QWidget):
                 center = QPoint(vals["x"] + vals["width"] // 2, vals["y"] + vals["height"] // 2)
                 g = (QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()).geometry()
                 window = (g.x(), g.y(), g.width(), g.height())
-            cmd = C.build_scrcpy_cmd(vals, window)
-            env = C.scrcpy_env_overrides(self.values())
+            cmd = C.build_scrcpy_cmd(vals, window, keyboard=self.keyboard_mode)
+            env = C.scrcpy_env_overrides(vals, self.keyboard_mode)
             prefix = " ".join(f"{k}={v}" for k, v in env.items())
             self.preview.setPlainText((prefix + " " if prefix else "") + " ".join(cmd))
         except ValueError as exc:
@@ -1650,18 +1651,16 @@ class MainWindow(QMainWindow):
         self.game.started.connect(self._on_game_started)
         no_console(self.engine)
         no_console(self.game)
-        self.game.finished.connect(lambda *_: (self.geo_timer.stop(), self._close_chat()))
+        self.game.finished.connect(lambda *_: self.geo_timer.stop())
 
-        # ventanita de scrcpy para escribir en el chat (solo teclado)
-        self.chat_proc = QProcess(self)
-        self.chat_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self.chat_proc.readyReadStandardOutput.connect(lambda: self._read_proc(self.chat_proc, "chat"))
-        self.chat_proc.errorOccurred.connect(lambda err: self.append_log(f"[chat] error: {err.name}"))
-        no_console(self.chat_proc)
-        self.chat_focus = QTimer(self)
-        self.chat_focus.setInterval(250)
-        self.chat_focus.timeout.connect(self._chat_focus_tick)
-        self.chat_focus_until = 0.0
+        # Linux: avisar al control si el juego tiene el foco (escudo del teclado)
+        self._game_keyboard = "disabled"
+        self._game_focused = False
+        self.focus_timer = QTimer(self)
+        self.focus_timer.setInterval(250)
+        self.focus_timer.timeout.connect(self._focus_tick)
+        if not IS_WINDOWS:
+            self.focus_timer.start()
 
         # espera de rotacion antes de abrir scrcpy
         self.wait_timer = QTimer(self)
@@ -1716,6 +1715,8 @@ class MainWindow(QMainWindow):
     # ---------- config <-> UI ----------
     def load_into_ui(self):
         self._loading = True
+        self.t_scrcpy.keyboard_mode = C.scrcpy_keyboard(self.cfg["special"],
+                                                        IS_WINDOWS or PT.window_tool_missing() is None)
         self.t_bind.load(self.cfg)
         self.t_sticks.load(self.cfg)
         self.t_mouse.load(self.cfg)
@@ -1822,11 +1823,9 @@ class MainWindow(QMainWindow):
         elif line == "Chat: ON":
             self._chat = True
             self._update_tray()
-            self._open_chat()
         elif line == "Chat: OFF":
             self._chat = False
             self._update_tray()
-            self._close_chat(refocus=True)
         elif line == "ACTIVO":
             self._connected, self._paused = True, False
             self._update_tray()
@@ -1888,7 +1887,7 @@ class MainWindow(QMainWindow):
         self.append_log(f"[control] termino (codigo {code})")
         self._set_mouselook(False)
         self._connected, self._paused, self._chat = False, False, False
-        self._close_chat()
+        self._game_focused = False
         self._update_tray()
         if IS_WINDOWS and code == 3:
             if QMessageBox.question(
@@ -2040,9 +2039,14 @@ class MainWindow(QMainWindow):
             return
         sc = self.cfg["scrcpy"]
         window = self._screen_rect() if sc.get("rotate_fit") == "screen" else None
-        cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")))
+        self._game_keyboard = self._keyboard_mode()
+        if self.cfg["special"].get("chat_window", True) and self._game_keyboard == "disabled":
+            self.append_log("[juego] sin teclado para el chat: instala xdotool para que kb2pad sepa cuando "
+                            "el juego tiene el foco")
+        self.geo_wid = None
+        cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")), self._game_keyboard)
         env = QProcessEnvironment.systemEnvironment()
-        for k, v in C.scrcpy_env_overrides(sc).items():
+        for k, v in C.scrcpy_env_overrides(sc, self._game_keyboard).items():
             env.insert(k, v)
         self.game.setProcessEnvironment(env)
         self.append_log("[juego] " + " ".join(cmd))
@@ -2117,47 +2121,23 @@ class MainWindow(QMainWindow):
         elif self.geo_fails == 4:
             self.append_log(f"[juego] la ventana no acepta {tw}x{th} (se queda {w}x{h})")
 
-    # ---------- chat ----------
-    def _open_chat(self):
-        sc = self.cfg["scrcpy"]
-        if not self.cfg["special"].get("chat_window", True):
-            return
-        if not self.game_running():
-            self.append_log("[chat] el teclado ya no es control; abre el juego para escribir en el celular")
-            return
-        if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
-            self._refocus_chat()                   # Alt+T otra vez: seguir escribiendo
-            return
-        gx, gy, gw, gh = (PT.window_geometry(self.geo_wid) if self.geo_wid else None) or self._screen_rect()
-        window = (gx + gw - 8, gy + gh - 8, 8, 8)    # diminuta en la esquina; ademas se vuelve transparente
-        cmd = C.build_chat_cmd(sc, window, self.cfg["special"].get("chat_keyboard", "uhid"))
-        env = QProcessEnvironment.systemEnvironment()
-        for k, v in C.scrcpy_env_overrides(sc).items():
-            env.insert(k, v)
-        self.chat_proc.setProcessEnvironment(env)
-        self.append_log("[chat] escribiendo en el celular (Alt+1/2/3 o Alt+Q para volver)")
-        self.chat_proc.start(cmd[0], cmd[1:])
-        self.chat_focus_until = time.monotonic() + 6
-        self.chat_focus.start()
+    # ---------- chat / escudo del teclado ----------
+    def _keyboard_mode(self):
+        """Teclado de la ventana de scrcpy. En Linux el escudo necesita xdotool (saber si el juego tiene el foco)."""
+        return C.scrcpy_keyboard(self.cfg["special"], IS_WINDOWS or PT.window_tool_missing() is None)
 
-    def _chat_focus_tick(self):
-        """Espera a que aparezca la ventanita del chat y le da el foco para escribir de inmediato."""
-        wid = self._chat_window()
-        if wid is not None:
-            self.chat_focus.stop()
-            PT.set_window_opacity(wid, 0.0)
-            QTimer.singleShot(150, lambda: PT.focus_window(wid))
-        elif time.monotonic() > self.chat_focus_until or not self.chat_proc.processId():
-            self.chat_focus.stop()
-
-    def _chat_window(self):
-        pid = self.chat_proc.processId()
-        return PT.find_window(pid, min_size=1) if pid else None
-
-    def _refocus_chat(self):
-        wid = self._chat_window()
-        if wid is not None:
-            PT.focus_window(wid)
+    def _focus_tick(self):
+        """Linux: avisa al control si la ventana del juego tiene el foco, para que solo ahi se
+        trague las teclas (en otras ventanas escribes normal)."""
+        focused = False
+        if self.engine_running() and self.game_running() and self._game_keyboard != "disabled":
+            if self.geo_wid is None:
+                self.geo_wid = self._find_game_window()
+            focused = self.geo_wid is not None and PT.active_window() == str(self.geo_wid)
+        if focused != self._game_focused:
+            self._game_focused = focused
+            if self.engine_running():
+                self.engine.write(b"focus on\n" if focused else b"focus off\n")
 
     def open_keyboard_settings(self):
         """Ajustes > Teclado fisico en el celular (para elegir el idioma del teclado 'scrcpy')."""
@@ -2165,24 +2145,15 @@ class MainWindow(QMainWindow):
         if not C.tool_exists(sc, "adb"):
             QMessageBox.warning(self, "adb", "No encontre adb.")
             return
-        if self.chat_proc.state() == QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "Teclado", "Primero entra al chat con Alt+T (con el juego abierto): "
-                                    "el teclado 'scrcpy' solo aparece en el celular mientras el chat esta activo.")
+        if not self.game_running() or self._game_keyboard != "uhid":
+            QMessageBox.information(self, "Teclado", "El teclado 'scrcpy' solo aparece en el celular mientras la "
+                                    "ventana del juego esta abierta con 'Teclado fisico'. Abre el juego y vuelve "
+                                    "a pulsar este boton.")
+            return
         PT.spawn(PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", "am", "start",
                             "-a", "android.settings.HARD_KEYBOARD_SETTINGS"))
         self.append_log("[chat] abriendo Ajustes > Teclado fisico en el celular: elige 'scrcpy' y el idioma "
                         "de tu teclado (ej. Español (Latinoamerica))")
-
-    def _close_chat(self, refocus=False):
-        self.chat_focus.stop()
-        if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
-            self.chat_proc.terminate()
-            QTimer.singleShot(1500, lambda: self.chat_proc.state() != QProcess.ProcessState.NotRunning
-                              and self.chat_proc.kill())
-            if refocus and self.game_running():
-                wid = self.geo_wid or self._find_game_window()
-                if wid:
-                    QTimer.singleShot(200, lambda: PT.focus_window(wid))
 
     def start_all(self):
         if not self.engine_running():
@@ -2205,9 +2176,6 @@ class MainWindow(QMainWindow):
             if ans == QMessageBox.StandardButton.Save and not self.save(quiet=True):
                 ev.ignore()
                 return
-        if self.chat_proc.state() != QProcess.ProcessState.NotRunning:
-            self.chat_proc.kill()
-            self.chat_proc.waitForFinished(1000)
         if self.game_running():
             self.game.terminate()
             if not self.game.waitForFinished(2000):

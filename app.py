@@ -25,7 +25,7 @@ from PyQt6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplicati
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QMenu, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QRadioButton, QScrollArea, QSpinBox, QSplitter, QStyle, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 import config as C
 import icons
 import platform_tools as PT
+import phoneinfo as PI
 import thermal as T
 from keycodes import win_scan_to_code
 
@@ -2008,7 +2009,10 @@ class HudClient:
             QTimer.singleShot(1500, lambda: self.running() and self.proc.kill())
 
     def _out(self):
-        data = bytes(self.proc.readAllStandardOutput()).decode(errors="replace").strip()
+        try:
+            data = bytes(self.proc.readAllStandardOutput()).decode(errors="replace").strip()
+        except RuntimeError:                       # la app se esta cerrando
+            return
         if data:
             self.log(f"[hud] {data[-300:]}")
 
@@ -2070,16 +2074,44 @@ class ThermalTab(QWidget):
 
         box = QGroupBox("HUD sobre el juego")
         form = QFormLayout(box)
-        self.hud = QCheckBox("Mostrar un cuadro con temperatura, bateria, FPS, perfil y modo encima del juego")
+        self.hud = QCheckBox("Mostrar un cuadro con datos del celular encima del juego")
         self.corner = QComboBox()
         for k, label in self.CORNERS.items():
             self.corner.addItem(label, k)
-        self.show_fps = QCheckBox("Mostrar los FPS del video que llegan a la PC")
+        self.layout_ = QComboBox()
+        self.layout_.addItem("Vertical (un dato por renglon)", "vertical")
+        self.layout_.addItem("Horizontal (todo en un renglon)", "horizontal")
+        self.theme = QComboBox()
+        for k, t in C.HUD_THEMES.items():
+            self.theme.addItem(t["label"], k)
+        self.font_size = _ispin(7, 24, 1, " pt")
+        self.status_colors = QCheckBox("Colores segun el valor (verde = bien, amarillo/naranja = ojo, rojo = mal)")
+        self.fields = QListWidget()
+        self.fields.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.fields.setMaximumHeight(210)
+        self.fields.itemChanged.connect(lambda *_: self.changed.emit())
+        self.fields.model().rowsMoved.connect(lambda *_: self.changed.emit())
+        b_up = QPushButton("Subir")
+        b_down = QPushButton("Bajar")
+        b_up.clicked.connect(lambda: self._move_field(-1))
+        b_down.clicked.connect(lambda: self._move_field(1))
+        side = QVBoxLayout()
+        side.addWidget(b_up)
+        side.addWidget(b_down)
+        side.addStretch()
+        row = QHBoxLayout()
+        row.addWidget(self.fields, 1)
+        row.addLayout(side)
         b_test = QPushButton("Probar HUD (5 s)")
         b_test.clicked.connect(self.test_hud.emit)
         form.addRow(self.hud)
+        form.addRow("Que mostrar:", row)
+        form.addRow("", self._hint("Marca los datos y ordenalos arrastrando o con Subir/Bajar."))
+        form.addRow("Disposicion:", self.layout_)
+        form.addRow("Estilo:", self.theme)
+        form.addRow("Tamaño de letra:", self.font_size)
+        form.addRow(self.status_colors)
         form.addRow("Esquina:", self.corner)
-        form.addRow(self.show_fps)
         form.addRow("", b_test)
         form.addRow("", self._hint("No recibe clics ni toma el foco. En Linux con Wayland usa X11 (XWayland) para "
                                    "poder ir encima de la ventana del juego. Tambien se activa o apaga desde el "
@@ -2087,12 +2119,44 @@ class ThermalTab(QWidget):
         lay.addWidget(box)
         lay.addStretch()
 
-        for w in (self.enabled, self.notify, self.tray_icon, self.hud, self.show_fps):
+        for w in (self.enabled, self.notify, self.tray_icon, self.hud, self.status_colors):
             w.toggled.connect(self.changed.emit)
-        for w in (self.interval, self.warn, self.critical, self.danger):
+        for w in (self.interval, self.warn, self.critical, self.danger, self.font_size):
             w.valueChanged.connect(self.changed.emit)
-        for w in (self.action, self.corner):
+        for w in (self.action, self.corner, self.layout_, self.theme):
             w.currentIndexChanged.connect(self.changed.emit)
+
+    def _move_field(self, delta):
+        row = self.fields.currentRow()
+        new = row + delta
+        if row < 0 or not 0 <= new < self.fields.count():
+            return
+        item = self.fields.takeItem(row)
+        self.fields.insertItem(new, item)
+        self.fields.setCurrentRow(new)
+        self.changed.emit()
+
+    def _fill_fields(self, fields):
+        self.fields.blockSignals(True)
+        self.fields.clear()
+        for key, on in fields:
+            item = QListWidgetItem(C.HUD_FIELDS.get(key, key))
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable |
+                          Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
+            item.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+            self.fields.addItem(item)
+        self.fields.blockSignals(False)
+
+    def hud_values(self):
+        return {
+            "enabled": self.hud.isChecked(), "corner": self.corner.currentData() or "tl",
+            "layout": self.layout_.currentData() or "vertical", "theme": self.theme.currentData() or "oscuro",
+            "font_size": self.font_size.value(), "status_colors": self.status_colors.isChecked(),
+            "fields": [[self.fields.item(i).data(Qt.ItemDataRole.UserRole),
+                        self.fields.item(i).checkState() == Qt.CheckState.Checked]
+                       for i in range(self.fields.count())],
+        }
 
     @staticmethod
     def _hint(text):
@@ -2113,7 +2177,11 @@ class ThermalTab(QWidget):
         self.tray_icon.setChecked(bool(th.get("tray_icon", True)))
         self.hud.setChecked(bool(hud.get("enabled", True)))
         self.corner.setCurrentIndex(max(0, self.corner.findData(hud.get("corner", "tl"))))
-        self.show_fps.setChecked(bool(hud.get("show_fps", True)))
+        self.layout_.setCurrentIndex(max(0, self.layout_.findData(hud.get("layout", "vertical"))))
+        self.theme.setCurrentIndex(max(0, self.theme.findData(hud.get("theme", "oscuro"))))
+        self.font_size.setValue(int(hud.get("font_size", 10)))
+        self.status_colors.setChecked(bool(hud.get("status_colors", True)))
+        self._fill_fields(hud.get("fields") or C.DEFAULT_CONFIG["hud"]["fields"])
 
     def store(self, cfg):
         cfg["thermal"] = {
@@ -2122,8 +2190,7 @@ class ThermalTab(QWidget):
             "danger_action": self.action.currentData() or "stream",
             "notify": self.notify.isChecked(), "tray_icon": self.tray_icon.isChecked(),
         }
-        cfg["hud"] = {"enabled": self.hud.isChecked(), "corner": self.corner.currentData() or "tl",
-                      "show_fps": self.show_fps.isChecked()}
+        cfg["hud"] = self.hud_values()
 
 
 # ================================================================ ventana principal
@@ -2191,6 +2258,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(scrolled(self.t_thermal), "Temperatura y HUD")
         self.t_thermal.changed.connect(self.mark_dirty)
         self.t_thermal.test_hud.connect(self.test_hud)
+        self.t_thermal.changed.connect(lambda: hasattr(self, "hud") and self._update_hud())
         for t in (self.t_bind, self.t_sticks, self.t_mouse, self.t_scrcpy):
             t.changed.connect(self.mark_dirty)
         self.t_scrcpy.log.connect(self.append_log)
@@ -2275,6 +2343,20 @@ class MainWindow(QMainWindow):
         self._fps_skipped = 0
         self._hud_test_until = 0.0
         self.hud = HudClient(self, self.append_log)
+        # datos del celular (modelo, chip, GPU) y FPS del juego en el celular
+        self.info_proc = QProcess(self)
+        self.info_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.info_proc.finished.connect(self._device_info_done)
+        no_console(self.info_proc)
+        self.fps_proc = QProcess(self)
+        self.fps_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.fps_proc.finished.connect(self._fps_done)
+        no_console(self.fps_proc)
+        self.fps_timer = QTimer(self)
+        self.fps_timer.setInterval(2000)
+        self.fps_timer.timeout.connect(self._fps_poll)
+        self._device_info = None
+        self._dev_fps, self._dev_last_frame, self._flip_prev = None, None, None
 
         # Linux: avisar al control si el juego tiene el foco (escudo del teclado)
         self._game_keyboard = "disabled"
@@ -2697,7 +2779,7 @@ class MainWindow(QMainWindow):
         self.geo_wid = None
         hud = self.cfg["hud"]
         cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")), self._game_keyboard,
-                                 print_fps=bool(hud.get("enabled", True) and hud.get("show_fps", True)))
+                                 print_fps=bool(hud.get("enabled", True) and C.hud_field_on(self.cfg, "video_fps")))
         env = QProcessEnvironment.systemEnvironment()
         for k, v in C.scrcpy_env_overrides(sc, self._game_keyboard).items():
             env.insert(k, v)
@@ -2720,6 +2802,7 @@ class MainWindow(QMainWindow):
         sc = self.cfg["scrcpy"]
         self._thermal_start()
         self._apply_hud_state()
+        QTimer.singleShot(2500, self._device_info_poll)
         if sc.get("rotate_fit", "screen") == "off":
             return
         missing = PT.window_tool_missing()
@@ -2935,34 +3018,144 @@ class MainWindow(QMainWindow):
         if self.cfg["hud"].get("enabled", True) and self.game_running():
             self.hud.start()
             QTimer.singleShot(800, self._update_hud)
+            if C.hud_field_on(self.cfg, "device_fps") and not self.fps_timer.isActive():
+                self._dev_fps, self._dev_last_frame, self._flip_prev = None, None, None
+                self.fps_timer.start()
         elif time.monotonic() > self._hud_test_until:
             self.hud.stop()
+            self.fps_timer.stop()
 
-    def _hud_lines(self):
+    # --- datos del celular para el HUD ---
+    def _device_info_poll(self):
+        sc = self.cfg["scrcpy"]
+        if self.info_proc.state() != QProcess.ProcessState.NotRunning or not C.tool_exists(sc, "adb"):
+            return
+        cmd = PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", PI.INFO_CMD)
+        self.info_proc.start(cmd[0], cmd[1:])
+
+    def _device_info_done(self, *_):
+        out = bytes(self.info_proc.readAllStandardOutput()).decode(errors="replace")
+        info = PI.parse_info(out)
+        if info["phone"] != "?" or info["gpu"]:
+            self._device_info = info
+            self.append_log(f"[celular] {info['phone']} · {info['soc']}" + (f" · {info['gpu']}" if info["gpu"] else ""))
+            self._update_hud()
+
+    def _fps_poll(self):
+        sc = self.cfg["scrcpy"]
+        if not self.game_running() or not C.hud_field_on(self.cfg, "device_fps"):
+            self.fps_timer.stop()
+            return
+        if self.fps_proc.state() != QProcess.ProcessState.NotRunning or not C.tool_exists(sc, "adb"):
+            return
+        cmd = PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", PI.FPS_SCRIPT)
+        self.fps_proc.start(cmd[0], cmd[1:])
+
+    def _fps_done(self, *_):
+        out = bytes(self.fps_proc.readAllStandardOutput()).decode(errors="replace")
+        last, fps, counter, _layer = PI.parse_fps(out)
+        now = time.monotonic()
+        value = None
+        if last is not None:                      # tiempos de los frames de la capa del juego
+            value = 0 if last == self._dev_last_frame else fps
+            self._dev_last_frame = last
+        elif counter is not None:                 # respaldo: frames que dibuja la pantalla
+            if self._flip_prev and counter >= self._flip_prev[0] and now > self._flip_prev[1]:
+                value = round((counter - self._flip_prev[0]) / (now - self._flip_prev[1]))
+            self._flip_prev = (counter, now)
+        self._dev_fps = value
+        self._update_hud()
+
+    # --- armar el HUD ---
+    @staticmethod
+    def _scale(value, steps):
+        """Color segun el valor: steps = [(limite, color), ...] de menor a mayor; el ultimo sin limite."""
+        for limit, color in steps:
+            if limit is None or value < limit:
+                return color
+        return steps[-1][1]
+
+    def _hud_rows(self, hv, sample=False):
+        th = self.cfg["thermal"]
+        warn, crit, danger = float(th.get("warn", 42)), float(th.get("critical", 46)), float(th.get("danger", 50))
+        colors = hv.get("status_colors", True)
+        theme = C.HUD_THEMES.get(hv.get("theme"), C.HUD_THEMES["oscuro"])
+        G, LG, Y, O, R = theme.get("status") or ("#3fbf3f", "#9be36d", "#ffd24d", "#ff9a3c", "#ff5050")
+
+        def col(c):
+            return c if colors else "text"
+
+        def temp_c(v):
+            return col(self._scale(v, [(warn - 4, G), (warn, LG), (crit, Y), (danger, O), (None, R)]))
+
+        def chip_c(v):
+            return col(self._scale(v, [(60, G), (72, LG), (82, Y), (90, O), (None, R)]))
+
+        def fps_c(v):
+            return col(G if v >= 55 else LG if v >= 40 else Y if v >= 28 else O if v >= 20 else R)
+
         info = self._thermal_info
-        lines = []
-        if info:
-            m = T.metric(info)
-            head = f"CEL {m[0]:.1f}°C" if m else "CEL --"
-            if info["status"] is not None:
-                head += f"  {T.status_name(info['status'])}"
-            lines.append(head)
-            parts = [f"{lab} {info['temps'][k]:.0f}°" for k, lab in (("cpu", "CPU"), ("gpu", "GPU"), ("bateria", "BAT"))
-                     if k in info["temps"]]
-            if parts:
-                lines.append("  ".join(parts))
-            if info["battery_level"] is not None:
-                lines.append(f"BATERIA {info['battery_level']}%" + ("  cargando" if info["charging"] else ""))
-        elif self.cfg["thermal"].get("enabled", True):
-            lines.append("CEL leyendo...")
-        if self.cfg["hud"].get("show_fps", True) and self._video_fps is not None:
-            lines.append(f"VIDEO {self._video_fps} fps" + (f"  ({self._fps_skipped} saltados)" if self._fps_skipped else ""))
-        prof = C.current_profile(self.cfg["scrcpy"])
-        mode = ("Chat" if self._chat else self._mode_name or "control") if self._connected else "control detenido"
-        lines.append(f"{C.PROFILES[prof][0] if prof else 'Personalizado'} · {mode}")
+        dev = self._device_info or {}
+        dev_fps, vid_fps, skipped = self._dev_fps, self._video_fps, self._fps_skipped
+        if sample:
+            info = info or {"status": 0, "temps": {"piel": 41.3, "cpu": 71.0, "gpu": 58.0, "bateria": 38.5},
+                            "battery_level": 72, "charging": True}
+            dev = dev or {"phone": "Tu telefono", "soc": "Snapdragon (ejemplo)", "gpu": "Adreno (ejemplo)"}
+            dev_fps = 60 if dev_fps is None else dev_fps
+            vid_fps = 59 if vid_fps is None else vid_fps
+        rows = []
         if self._thermal_level >= T.CRITICAL:
-            lines.insert(0, "!! CALIENTE: baja los FPS del juego")
-        return lines
+            rows.append([["!! CALIENTE: baja los FPS del juego", ["#e9edf2", Y, O, R][self._thermal_level]]])
+        for key, on in hv.get("fields") or []:
+            if not on:
+                continue
+            if key == "temp":
+                m = T.metric(info) if info else None
+                row = [["TEMP ", "key"], [f"{m[0]:.1f}°C", temp_c(m[0])] if m else ["--", "key"]]
+                if info and info.get("status") is not None:
+                    st = info["status"]
+                    row.append([f"  {T.status_name(st)}", col([G, LG, Y, O, R, R, R][min(st, 6)]) if st else "key"])
+                rows.append(row)
+            elif key == "temps":
+                if not info:
+                    continue
+                row = []
+                for k, lab, cf in (("cpu", "CPU", chip_c), ("gpu", "GPU", chip_c), ("bateria", "BAT", temp_c)):
+                    if k in info["temps"]:
+                        row += [[("  " if row else "") + lab + " ", "key"], [f"{info['temps'][k]:.0f}°", cf(info["temps"][k])]]
+                if row:
+                    rows.append(row)
+            elif key == "battery":
+                lvl = info.get("battery_level") if info else None
+                if lvl is None:
+                    continue
+                bars, c = ((4, G) if lvl >= 88 else (3, LG) if lvl >= 63 else (2, LG) if lvl >= 38 else
+                           (1, O) if lvl >= 13 else (0, R))
+                row = [["[" + "█" * bars + " " * (4 - bars) + "]", col(c)], [f" {lvl}%", col(c)]]
+                if info.get("charging"):
+                    row.append([" ⚡", col(Y)])
+                rows.append(row)
+            elif key == "device_fps":
+                rows.append([["JUEGO ", "key"], [f"{dev_fps} fps", fps_c(dev_fps)] if dev_fps is not None
+                             else ["-- fps", "key"]])
+            elif key == "video_fps":
+                row = [["VIDEO ", "key"], [f"{vid_fps} fps", fps_c(vid_fps)] if vid_fps is not None
+                       else ["-- fps", "key"]]
+                if skipped:
+                    row.append([f"  ({skipped} saltados)", col(O)])
+                rows.append(row)
+            elif key == "soc":
+                rows.append([["CHIP ", "key"], [dev.get("soc") or "...", "text"]])
+            elif key == "gpu":
+                rows.append([["GPU ", "key"], [dev.get("gpu") or "...", "text"]])
+            elif key == "phone":
+                rows.append([["CEL ", "key"], [dev.get("phone") or "...", "text"]])
+            elif key == "profile":
+                prof = C.current_profile(self.cfg["scrcpy"])
+                mode = ("Chat" if self._chat else self._mode_name or "control") if self._connected else "control detenido"
+                rows.append([[C.PROFILES[prof][0] if prof else "Personalizado", "text"], ["  ·  ", "key"],
+                             [mode, "text"]])
+        return rows
 
     def _update_hud(self):
         if not self.hud.running():
@@ -2971,14 +3164,17 @@ class MainWindow(QMainWindow):
         if not testing and not (self.cfg["hud"].get("enabled", True) and self.game_running()):
             self.hud.send({"show": False})
             return
+        hv = self.t_thermal.hud_values()             # el aspecto sigue a la pestaña (se ve al momento)
         rect = None
         if self.game_running():
             if self.geo_wid is None:
                 self.geo_wid = self._find_game_window()
             rect = PT.window_geometry(self.geo_wid) if self.geo_wid else None
-        corner = self.t_thermal.corner.currentData() if testing else self.cfg["hud"].get("corner", "tl")
-        self.hud.send({"show": True, "lines": self._hud_lines(), "level": self._thermal_level,
-                       "rect": list(rect or self._screen_rect()), "corner": corner or "tl"})
+        theme = C.HUD_THEMES.get(hv["theme"], C.HUD_THEMES["oscuro"])
+        self.hud.send({"show": True, "rows": self._hud_rows(hv, sample=testing), "level": self._thermal_level,
+                       "rect": list(rect or self._screen_rect()), "corner": hv["corner"],
+                       "layout": hv["layout"], "font_size": hv["font_size"],
+                       "theme": {k: theme[k] for k in ("bg", "key", "text", "outline")}})
 
     def test_hud(self):
         self._hud_test_until = time.monotonic() + 5
@@ -3027,6 +3223,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(400, self._launch_scrcpy)
             return
         self._thermal_stop()
+        self._dev_fps = None
         self._apply_hud_state()
 
     def start_all(self):

@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -324,13 +324,73 @@ DEFAULT_CONFIG = {
     "hud": {
         "enabled": True,                    # cuadro con temperatura/bateria/FPS encima del juego
         "corner": "tl",                     # tl tr bl br
-        "show_fps": True,                   # FPS del video que llegan a la PC (scrcpy --print-fps)
+        "layout": "vertical",               # vertical = un dato por renglon; horizontal = todo en un renglon
+        "theme": "oscuro",                  # ver HUD_THEMES
+        "font_size": 10,
+        "status_colors": True,              # colores segun el valor (temperatura, bateria, FPS)
+        "fields": [[k, on] for k, on in (("temp", True), ("temps", True), ("battery", True),
+                                          ("device_fps", True), ("video_fps", True), ("soc", False),
+                                          ("gpu", False), ("phone", False), ("profile", True))],
     },
 }
 
 
 ROTATE_FIT = {"screen": "Ocupar toda la pantalla", "fixed": "Usar la posicion y tamaño fijos",
               "off": "No tocar la ventana"}
+
+
+HUD_FIELDS = {
+    "temp": "Temperatura del celular y estado termico",
+    "temps": "Temperaturas de CPU, GPU y bateria",
+    "battery": "Bateria (barras y %)",
+    "device_fps": "FPS del juego en el celular",
+    "video_fps": "FPS del video que llega a la PC",
+    "soc": "Procesador (modelo del chip)",
+    "gpu": "GPU",
+    "phone": "Modelo del telefono",
+    "profile": "Perfil de video y modo del control",
+}
+HUD_THEMES = {
+    # fondo RGBA, color de las etiquetas, color del texto, contorno en el texto (para fondo transparente)
+    "oscuro": {"label": "Oscuro", "bg": [12, 14, 18, 175], "key": "#8b949e", "text": "#e6edf3", "outline": False},
+    "mango": {"label": "Estilo MangoHud", "bg": [0, 0, 0, 140], "key": "#ff9b2f", "text": "#ffffff", "outline": False},
+    "neon": {"label": "Neon", "bg": [14, 4, 30, 180], "key": "#00e5ff", "text": "#ff6bff", "outline": False},
+    "contraste": {"label": "Alto contraste", "bg": [0, 0, 0, 235], "key": "#ffd400", "text": "#ffffff", "outline": False},
+    "claro": {"label": "Claro", "bg": [245, 247, 250, 215], "key": "#4a5568", "text": "#111418", "outline": False,
+              "status": ["#13801a", "#4d8f0f", "#a87400", "#c75a00", "#c41e1e"]},
+    "transparente": {"label": "Sin fondo (texto con contorno)", "bg": [0, 0, 0, 0], "key": "#d0d7de",
+                     "text": "#ffffff", "outline": True},
+}
+
+
+def _norm_hud(hud):
+    """Campos del HUD: todos los conocidos, en el orden guardado; los nuevos al final."""
+    legacy = hud.pop("show_fps", None)          # v0.4: una sola casilla para los FPS del video
+    fields, seen = [], set()
+    for item in hud.get("fields") or []:
+        if isinstance(item, (list, tuple)) and len(item) == 2 and item[0] in HUD_FIELDS and item[0] not in seen:
+            fields.append([item[0], bool(item[1])])
+            seen.add(item[0])
+    for k, on in DEFAULT_CONFIG["hud"]["fields"]:
+        if k not in seen:
+            fields.append([k, on])
+    if legacy is not None:
+        for f in fields:
+            if f[0] == "video_fps":
+                f[1] = bool(legacy)
+    hud["fields"] = fields
+    if hud.get("layout") not in ("vertical", "horizontal"):
+        hud["layout"] = "vertical"
+    if hud.get("theme") not in HUD_THEMES:
+        hud["theme"] = "oscuro"
+    try:
+        hud["font_size"] = max(7, min(24, int(hud.get("font_size") or 10)))
+    except (TypeError, ValueError):
+        hud["font_size"] = 10
+
+
+def hud_field_on(cfg, key):
+    return any(k == key and on for k, on in (cfg.get("hud") or {}).get("fields") or [])
 
 
 def default_config():
@@ -465,6 +525,7 @@ def normalize(data):
     sc = out["scrcpy"]
     if sc.get("rotate_fit") not in ROTATE_FIT:
         sc["rotate_fit"] = "screen"
+    _norm_hud(out["hud"])
     try:
         sc["max_size"] = max(0, int(sc.get("max_size") or 0))
     except (TypeError, ValueError):

@@ -76,7 +76,8 @@ flowchart LR
   tu chip.
 - **Perfiles de video** (Mejor calidad, Balanceado, Rendimiento, Máximo rendimiento) y `Alt + P`
   para alternar entre dos en plena partida.
-- **Temperatura del celular**: HUD encima del juego con temperatura, batería, FPS, perfil y modo;
+- **Temperatura del celular**: HUD encima del juego configurable (temperatura, batería, FPS del juego y
+  del video, procesador, GPU, modelo, perfil y modo; vertical u horizontal; varios estilos de color);
   icono con la temperatura en la bandeja; notificación al llegar a crítico y, en peligro, cierra la
   transmisión (o lo que elijas).
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
@@ -108,8 +109,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.4.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.4.0-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.5.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.5.0-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -312,9 +313,27 @@ alta) y el estado térmico de Android; la del CPU se muestra, pero sube a 70–8
 | Crítico | 46 °C o *severo* | Naranja + **una notificación del sistema** (máximo cada 10 min) |
 | Peligro | 50 °C o *crítico* | Rojo + **notificación de peligro** y, si sigue así dos lecturas, **cierra la transmisión** (o la transmisión y el juego, o solo avisa) |
 
-- **HUD**: un cuadro chico encima del juego con temperatura, batería, FPS del video, perfil y modo.
-  No recibe clics ni toma el foco. Eliges la esquina, y se activa o apaga desde el menú del icono de
-  la bandeja. En Linux con Wayland se dibuja con X11 (XWayland) para poder ir encima del juego.
+- **HUD**: un cuadro encima del juego, estilo MangoHud pero con datos del celular. No recibe clics ni
+  toma el foco, y se activa o apaga desde el menú del icono de la bandeja. En Linux con Wayland se
+  dibuja con X11 (XWayland) para poder ir encima del juego. En la pestaña eliges:
+  - **Qué mostrar y en qué orden** (casillas; arrastras o usas Subir/Bajar): temperatura y estado
+    térmico, CPU/GPU/batería en °C, batería, **FPS del juego en el celular**, FPS del video que llega
+    a la PC, **procesador** (por ejemplo *Snapdragon 8s Gen 4*), **GPU** (*Adreno 825*), **modelo del
+    teléfono** y perfil/modo.
+  - **Vertical u horizontal** (en horizontal salta de renglón si no cabe).
+  - **Estilo**: Oscuro, Estilo MangoHud, Neón, Alto contraste, Claro o Sin fondo (texto con contorno).
+  - **Tamaño de letra**, **esquina** y **colores según el valor**:
+    - Temperatura: verde, verde claro, amarillo, naranja y rojo según tus límites. CPU y GPU tienen su
+      propia escala (verde hasta 60 °C, rojo desde 90 °C).
+    - Batería con barras: `[████]` verde (llena), `[███ ]` y `[██  ]` verde claro (3/4 y media),
+      `[█   ]` naranja (1/4) y `[    ]` rojo (vacía); ⚡ si está cargando.
+    - FPS: verde desde 55, amarillo/naranja abajo de 40, rojo abajo de 20.
+
+  ![HUD vertical y horizontal](docs/img/hud.png)
+
+  Los FPS del juego se leen de SurfaceFlinger (los frames que dibuja la app con el foco) cada 2 s; si
+  tu celular no lo permite, se usa el contador de frames de la pantalla. Si sale `--`, tu celular no
+  da ninguno de los dos.
 - **Icono de temperatura** en la bandeja, con el número y el color del nivel.
 - Todo se ajusta en la pestaña **Temperatura y HUD**.
 
@@ -346,6 +365,7 @@ calidad del video.
 | `platform_tools.py` | adb, rotación del celular y manejo de la ventana de scrcpy según el sistema. |
 | `thermal.py` | Lee y clasifica la temperatura del celular (`dumpsys thermalservice` / `battery`). |
 | `hud.py` | El HUD encima del juego (proceso aparte: `app.py --hud`). |
+| `phoneinfo.py` | Modelo, procesador, GPU y FPS del juego en el celular (getprop / SurfaceFlinger). |
 | `icons.py` | Iconos de los modos y de la temperatura, dibujados con QPainter. |
 | `kb2pad.spec`, `vigem/` | Build de Windows (PyInstaller) y el cliente/instalador de ViGEmBus. |
 

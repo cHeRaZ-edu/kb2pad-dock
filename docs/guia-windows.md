@@ -32,7 +32,7 @@ carga) y un juego que acepte control.
 
 1. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.5.1-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
+   `kb2pad-dock-v0.5.2-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
    No lo abras desde dentro del zip.
 2. **Descarga scrcpy.**
    En [scrcpy Releases](https://github.com/Genymobile/scrcpy/releases) baja el zip

@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.5.2"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"

@@ -109,8 +109,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.5.1-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.5.1-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.5.2-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.5.2-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 

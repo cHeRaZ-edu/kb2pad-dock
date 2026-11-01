@@ -40,7 +40,9 @@ FPS_SCRIPT = (
     "[ -z \"$P\" ] && P=$(dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' "
     "| grep -oE '[A-Za-z0-9_.]+/' | head -n1 | tr -d /); "
     # la capa con frames es la "(BLAST)" de la SurfaceView del juego (la otra solo es el contenedor)
-    "S=$(dumpsys SurfaceFlinger --list | grep -F \"$P\" | grep -v Background); "
+    # Android 16 lista 'RequestedLayerState{<nombre> parentId=...}': se deja solo el nombre
+    "S=$(dumpsys SurfaceFlinger --list | grep -F \"$P\" | grep -v Background "
+    "| sed -E 's/^RequestedLayerState[{]//; s/ (parentId|relativeParentId|z)=.*$//; s/[}]$//'); "
     "L=$(echo \"$S\" | grep -F SurfaceView | grep -F BLAST | head -n1); "
     "[ -z \"$L\" ] && L=$(echo \"$S\" | grep -F BLAST | head -n1); "
     "[ -z \"$L\" ] && L=$(echo \"$S\" | grep -F SurfaceView | head -n1); "
@@ -88,8 +90,9 @@ def gpu_name(text, props=None):
     text = text or ""
     m = re.search(r"GLES:\s*([^,\n]*),\s*([^,\n]*)", text)
     if m:
-        renderer = m.group(2).replace("(TM)", "").replace("(R)", "")
-        return re.sub(r"\s+", " ", renderer).strip()
+        renderer = re.sub(r"\s+", " ", m.group(2).replace("(TM)", "").replace("(R)", "")).strip()
+        if renderer:
+            return renderer
     m = re.search(r"KGSL=\s*Adreno\s*(\d+)", text, re.I)
     if m:
         return f"Adreno {m.group(1)}"

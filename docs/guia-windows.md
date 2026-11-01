@@ -32,7 +32,7 @@ carga) y un juego que acepte control.
 
 1. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.2.2-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
+   `kb2pad-dock-v0.3.0-windows-x64.zip` y **descomprímelo** (por ejemplo en `C:\kb2pad-dock`).
    No lo abras desde dentro del zip.
 2. **Descarga scrcpy.**
    En [scrcpy Releases](https://github.com/Genymobile/scrcpy/releases) baja el zip
@@ -102,6 +102,12 @@ Si no ves el icono junto al reloj, abre la flecha **^** de la barra de tareas y 
 icono de kb2pad-dock a la barra para dejarlo siempre visible.
 
 La tabla de controles y de modos está en el [README](../README.md#controles-por-defecto).
+
+**Si sientes retraso en la imagen**: en la pestaña *Juego (scrcpy)* pon *Codec* `h264`,
+*Resolución máxima* `1920` y, en *Codificador*, pulsa *Buscar codificadores* y elige uno de
+hardware. Para ir más allá está *Optimización del codificador (avanzado)* con el botón
+**Bajar latencia (automático)**; viene apagada y te muestra sus advertencias antes de aplicar
+(ver el [README](../README.md#bajar-el-retraso-del-video)).
 
 ## Parte 5. Apagar la pantalla del celular
 

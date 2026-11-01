@@ -71,6 +71,9 @@ flowchart LR
 - **La ventana ocupa toda la pantalla cada vez que el celular pasa a horizontal**, aunque salgas
   del juego y vuelvas; no hace falta reconectar.
 - **Modo red (Wi-Fi)**: juega sin cable; se activa con un botón (o emparejando en Android 11+).
+- **Menos retraso de video**: elige el codificador del celular, la resolución máxima y, opcional,
+  las opciones de baja latencia de cada fabricante (Qualcomm, MediaTek...) con un botón que detecta
+  tu chip.
 - **Pantalla del celular apagada** mientras juegas (ver las guías).
 - Con **Alt presionado** no se manda nada al juego: `Alt+Tab` y los atajos de scrcpy (`Alt+O`)
   no disparan botones.
@@ -100,8 +103,8 @@ En **[Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases)**:
 
 | Archivo | Para |
 |---|---|
-| `kb2pad-dock-v0.2.2-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
-| `kb2pad-dock-v0.2.2-linux.tar.gz` | Linux: el código, se corre con Python |
+| `kb2pad-dock-v0.3.0-windows-x64.zip` | Windows 10/11 de 64 bits: trae `kb2pad.exe`, no necesitas Python |
+| `kb2pad-dock-v0.3.0-linux.tar.gz` | Linux: el código, se corre con Python |
 
 ## Guías paso a paso
 
@@ -235,6 +238,41 @@ En la pestaña **Juego (scrcpy)**, *Conexión* = **Red (Wi-Fi)**:
 
 El video por Wi-Fi tiene más retraso que por cable: usa una red de 5 GHz y baja el bitrate a 8M–16M.
 Si el celular se reinicia, hay que volver a activar la red.
+
+## Bajar el retraso del video
+
+Casi todo el retraso que se siente es del **video** (el celular codifica, la PC decodifica y
+dibuja), no del control. En la pestaña **Juego (scrcpy)** → *Video*:
+
+| Opción | Qué hacer |
+|---|---|
+| **Codec** | `h264` suele llegar antes que `h265`: la PC decodifica con el procesador y H.264 pesa menos. |
+| **Codificador** | *Buscar codificadores* lee los de tu celular. Usa uno de **hardware** (por ejemplo `c2.qti.avc.encoder`); evita los de software (`c2.android…`). *Automático* deja que el celular elija. |
+| **Resolución máxima** | `1920` en un monitor 1080p: el celular codifica muchos menos píxeles. |
+| **Bitrate** | 16M alcanza con 1920 de ancho. |
+| **Sin audio** | Libera un poco de procesador en los dos lados; el sonido sale por el celular. |
+
+### Optimización del codificador (avanzado)
+
+Viene **apagada**. Son opciones que se le pasan al codificador de video del celular:
+
+| Opción | Para | Qué hace |
+|---|---|---|
+| Tiempo real (`priority=0`, `latency=1`) | Cualquier chip | Solo con scrcpy anterior a 4.0; las versiones nuevas ya lo hacen. |
+| Sin B-frames (`max-bframes=0`) | Cualquier chip | Quita frames que esperan al siguiente. Casi todos los celulares ya no los usan. |
+| Modo de baja latencia (`vendor.qti-ext-enc-low-latency.enable=1`) | Qualcomm | Recorta 1–2 frames en las pruebas de los desarrolladores de scrcpy. **Puede bajar la calidad en movimiento.** |
+| Modo conferencia (`mtk.ext.venc.scenario.based.sdk.mode=1`) | MediaTek | Prioriza el retraso bajo; solo en chips con su SDK de video 2.0. **Puede bajar la calidad.** |
+
+Samsung Exynos, Google Tensor, Unisoc y Kirin no tienen una opción pública de baja latencia; para
+ellos solo aplican las comunes.
+
+**Bajar latencia (automático)** detecta el chip y tu versión de scrcpy, marca lo recomendado y te
+muestra qué va a cambiar, con sus advertencias, antes de aplicarlo. También puedes activar la
+sección y marcar las casillas a mano. Si el celular no reconoce una opción, la ignora. Si scrcpy
+no abre o la imagen se ve mal, pulsa **Quitar optimizaciones**.
+
+**Para medir**: graba en cámara lenta con otro celular el monitor y el celular juntos, presiona una
+tecla y cuenta los frames de diferencia antes y después de cada cambio.
 
 ## Notas
 

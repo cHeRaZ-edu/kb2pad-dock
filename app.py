@@ -944,12 +944,73 @@ class ScrcpyTab(QWidget):
         self.max_fps = _ispin(10, 240, 10, " fps")
         self.no_mipmaps = QCheckBox("Sin mipmaps (mas nitido al reducir)")
         self.stay_awake = QCheckBox("Mantener el celular despierto")
+        self.encoder = QComboBox()
+        self.encoder.setMinimumWidth(260)
+        self.btn_encoders = QPushButton("Buscar codificadores")
+        self.btn_encoders.setToolTip("Lee del celular sus codificadores de video (scrcpy --list-encoders)")
+        self.btn_encoders.clicked.connect(self.refresh_encoders)
+        self.encoder_status = QLabel()
+        self.encoder_status.setStyleSheet("color: gray;")
+        self.max_size = _ispin(0, 8192, 64, " px")
+        self.max_size.setSpecialValueText("Original")
+        self.no_audio = QCheckBox("Sin audio en la PC (el sonido sale por el celular)")
         form.addRow("Codec:", self.codec)
+        row = QHBoxLayout()
+        row.addWidget(self.encoder, 1)
+        row.addWidget(self.btn_encoders)
+        form.addRow("Codificador:", row)
+        form.addRow("", self.encoder_status)
         form.addRow("Bitrate:", self.bitrate)
         form.addRow("FPS maximos:", self.max_fps)
+        form.addRow("Resolucion maxima:", self.max_size)
+        form.addRow("", self._hint("Lado mayor del video. Con 1920 en un monitor 1080p el celular codifica menos "
+                                   "pixeles y llega antes. 'Original' = la resolucion del celular."))
+        form.addRow("", self.no_audio)
         form.addRow("", self.no_mipmaps)
         form.addRow("", self.stay_awake)
         lay.addWidget(box)
+
+        # --- optimizacion del codificador (avanzado)
+        lowlat_box = QGroupBox("Optimizacion del codificador (avanzado)")
+        form = QFormLayout(lowlat_box)
+        self.lowlat = QCheckBox("Activar la optimizacion del codificador")
+        self.lowlat.setStyleSheet("font-weight: bold;")
+        warn = QLabel("Opciones del codificador de video del celular para bajar el retraso. Si el celular no "
+                      "reconoce una, la ignora. Si scrcpy no abre o la imagen se ve mal, desactiva esta seccion.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #c9a227;")
+        form.addRow(warn)
+        row = QHBoxLayout()
+        self.soc_label = QLabel("sin detectar")
+        b_detect = QPushButton("Detectar")
+        b_detect.clicked.connect(self.detect_soc)
+        row.addWidget(self.soc_label, 1)
+        row.addWidget(b_detect)
+        form.addRow("Chip del celular:", row)
+        self.version_label = QLabel()
+        self.version_label.setStyleSheet("color: gray;")
+        form.addRow("scrcpy:", self.version_label)
+        form.addRow(self.lowlat)
+        self.lowlat_checks = {}
+        for key, (values, label, warning) in C.LOWLAT_OPTIONS.items():
+            chk = QCheckBox(label)
+            chk.setToolTip(",".join(values))
+            chk.toggled.connect(self._changed)
+            self.lowlat_checks[key] = chk
+            form.addRow(chk)
+            form.addRow("", self._hint(warning))
+        row = QHBoxLayout()
+        b_auto = QPushButton("Bajar latencia (automatico)")
+        b_auto.setToolTip("Detecta el chip y marca lo recomendado (te muestra que cambia antes de aplicar)")
+        b_auto.clicked.connect(self.auto_lowlat)
+        b_clear = QPushButton("Quitar optimizaciones")
+        b_clear.clicked.connect(self.clear_lowlat)
+        row.addWidget(b_auto)
+        row.addWidget(b_clear)
+        row.addStretch()
+        form.addRow(row)
+        form.addRow("", self._hint("Manual: activa la seccion y marca tu las casillas. Se aplica al abrir el juego."))
+        lay.addWidget(lowlat_box)
 
         box = QGroupBox("Ventana")
         grid = QGridLayout(box)
@@ -1022,8 +1083,25 @@ class ScrcpyTab(QWidget):
         lay.addWidget(box)
         lay.addStretch()
 
-        for w in (self.max_fps, self.x, self.y, self.w, self.h):
+        for w in (self.max_fps, self.x, self.y, self.w, self.h, self.max_size):
             w.valueChanged.connect(self._changed)
+        self.no_audio.toggled.connect(self._changed)
+        self.lowlat.toggled.connect(self._changed)
+        self.lowlat.toggled.connect(self._sync)
+        self.encoder.currentIndexChanged.connect(self._changed)
+        self.encoder.currentIndexChanged.connect(self._remember_encoder)
+        self._enc_choice = {}
+        self.codec.currentTextChanged.connect(self._fill_encoders)
+        self.enc_proc = QProcess(self)
+        self.enc_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.enc_proc.finished.connect(self._encoders_done)
+        no_console(self.enc_proc)
+        self.encoders = [tuple(x) for x in load_json_cache(ENCODERS_CACHE, "encoders")]
+        self._wanted_encoder = ("", "")
+        self._soc = None
+        self.enc_timer = QTimer(self)
+        self.enc_timer.setSingleShot(True)
+        self.enc_timer.timeout.connect(self.enc_proc.kill)
         for w in (self.no_mipmaps, self.stay_awake, self.borderless, self.set_geometry, self.force_x11,
                   self.launch_app, self.wait_landscape, self.ask_on_start):
             w.toggled.connect(self._changed)
@@ -1051,6 +1129,8 @@ class ScrcpyTab(QWidget):
         for w in (self.x, self.y, self.w, self.h):
             w.setEnabled(on)
         self.wifi_hint.setVisible(self.connection.currentData() == "wifi")
+        for chk in self.lowlat_checks.values():
+            chk.setEnabled(self.lowlat.isChecked())
 
     def _changed(self, *_):
         self._update_preview()
@@ -1079,7 +1159,151 @@ class ScrcpyTab(QWidget):
             "keep_geometry": (self.rotate_fit.currentData() or "screen") != "off",
             "connection": self.connection.currentData() or "usb",
             "wifi_address": self.wifi_address.text().strip(),
+            "max_size": self.max_size.value(),
+            "no_audio": self.no_audio.isChecked(),
+            "encoder": self._encoder_value()[0],
+            "encoder_codec": self._encoder_value()[1],
+            "lowlat_enabled": self.lowlat.isChecked(),
+            **{k: chk.isChecked() for k, chk in self.lowlat_checks.items()},
+            "soc": self._soc[1] if self._soc else "",
+            "soc_vendor": self._soc[0] if self._soc else "",
         }
+
+    # ---------- codificador ----------
+    def _version(self):
+        sc = {"scrcpy_dir": self.scrcpy_dir.text().strip()}
+        return PT.scrcpy_version(C.tool_path(sc, "scrcpy")) if C.tool_exists(sc, "scrcpy") else None
+
+    def _encoder_value(self):
+        data = self.encoder.currentData()            # "codec|codificador" ("" = automatico)
+        if not data:
+            return ("", "")
+        codec, name = data.split("|", 1)
+        return (name, codec)
+
+    def _remember_encoder(self, *_):
+        name, ecodec = self._encoder_value()
+        self._enc_choice[self.codec.currentText()] = name if ecodec == self.codec.currentText() else ""
+
+    def _fill_encoders(self, *_):
+        codec = self.codec.currentText()
+        name, ecodec = self._enc_choice.get(codec, ""), codec
+        if not name and self._wanted_encoder[1] == codec and codec not in self._enc_choice:
+            name = self._wanted_encoder[0]
+        self.encoder.blockSignals(True)
+        self.encoder.clear()
+        self.encoder.addItem("Automatico (el que elija el celular)", "")
+        mine = [enc for enc in self.encoders if enc[0] == codec]
+        if name and ecodec == codec and not any(enc[1] == name for enc in mine):
+            mine.append((codec, name, ""))
+        kinds = {"hw": "  (hardware)", "sw": "  (software: lento)", "hybrid": "  (hibrido)"}
+        for c, n, t in mine:
+            self.encoder.addItem(n + kinds.get(t, ""), f"{c}|{n}")
+        idx = self.encoder.findData(f"{codec}|{name}") if name and ecodec == codec else 0
+        self.encoder.setCurrentIndex(max(0, idx))
+        self.encoder.blockSignals(False)
+        if self.encoders:
+            self.encoder_status.setText(f"{len(mine)} codificador(es) de {codec} en el celular. Evita los de "
+                                        "software (c2.android...).")
+        else:
+            self.encoder_status.setText("Pulsa 'Buscar codificadores' con el celular conectado.")
+        self._update_preview()
+
+    def refresh_encoders(self):
+        if self.enc_proc.state() != QProcess.ProcessState.NotRunning:
+            return
+        sc = self.values()
+        if not C.tool_exists(sc, "scrcpy"):
+            QMessageBox.warning(self, "scrcpy", "No encontre scrcpy. Elige su carpeta arriba.")
+            return
+        serial = C.effective_serial(sc)
+        self.btn_encoders.setEnabled(False)
+        self.encoder_status.setText("Leyendo los codificadores del celular...")
+        self.enc_proc.start(C.tool_path(sc, "scrcpy"), (["-s", serial] if serial else []) + ["--list-encoders"])
+        self.enc_timer.start(30000)
+
+    def _encoders_done(self, *_):
+        self.enc_timer.stop()
+        self.btn_encoders.setEnabled(True)
+        out = bytes(self.enc_proc.readAllStandardOutput()).decode(errors="replace")
+        found = C.parse_encoders(out)
+        if not found:
+            self.encoder_status.setText("No pude leer los codificadores. ¿El celular esta conectado?")
+            return
+        self.encoders = found
+        save_json_cache(ENCODERS_CACHE, "encoders", found)
+        self._fill_encoders()
+
+    # ---------- optimizacion ----------
+    def detect_soc(self, quiet=False):
+        """Lee el chip del celular (getprop). Regresa el fabricante o None."""
+        sc = self.values()
+        if not C.tool_exists(sc, "adb"):
+            if not quiet:
+                QMessageBox.warning(self, "adb", "No encontre adb.")
+            return None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        out = PT.run(PT.adb_cmd(C.tool_path(sc, "adb"), C.effective_serial(sc), "shell", "getprop"), timeout=8)
+        QApplication.restoreOverrideCursor()
+        props = dict(re.findall(r"^\[([^\]]+)\]: \[(.*)\]\s*$", out, re.M))
+        if not props:
+            if not quiet:
+                QMessageBox.warning(self, "Chip", "No pude leer el celular. ¿Esta conectado?")
+            return None
+        self._soc = C.detect_soc(props, [enc[1] for enc in self.encoders])
+        self.soc_label.setText(self._soc[1])
+        self._changed()
+        return self._soc[0]
+
+    def auto_lowlat(self):
+        vendor = self.detect_soc(quiet=True) or (self._soc[0] if self._soc else None)
+        if vendor is None:
+            QMessageBox.warning(self, "Bajar latencia", "No pude leer el chip del celular. Conectalo y vuelve a "
+                                "intentar, o marca las opciones a mano.")
+            return
+        ver = self._version()
+        rec = C.recommended_lowlat(vendor, ver)
+        lines, warns = [], []
+        for key, on in rec.items():
+            values, label, warning = C.LOWLAT_OPTIONS[key]
+            if on:
+                lines.append(f"• {label}" + ("" if values[0] in label else f"  ({', '.join(values)})"))
+                warns.append(f"• {label}: {warning}")
+        if ver and ver >= (4, 0):
+            lines.append("• Tiempo real: no hace falta, tu scrcpy ya lo trae")
+        if vendor not in ("qcom", "mtk"):
+            lines.append(f"• {C.SOC_NAMES[vendor]}: no tiene una opcion publica de baja latencia; solo las comunes")
+        size_hint = self.max_size.value() == 0
+        if size_hint:
+            lines.append("• Resolucion maxima: 1920 px (ahora es la original)")
+            warns.append("• Resolucion maxima: la imagen se ve un poco menos nitida si tu monitor es mas grande que 1080p.")
+        enc = self._encoder_value()[0]
+        if enc.startswith("c2.android"):
+            lines.append(f"• Codificador: Automatico (ahora es {enc}, que es por software)")
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Bajar latencia")
+        msg.setText(f"Chip: {self._soc[1]}\n\nSe va a activar:\n" + "\n".join(lines))
+        msg.setInformativeText("Advertencias:\n" + "\n".join(warns) +
+                               "\n\nSe aplica al abrir el juego. Si scrcpy no abre o la imagen se ve mal, "
+                               "pulsa 'Quitar optimizaciones'.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        msg.button(QMessageBox.StandardButton.Ok).setText("Aplicar")
+        if msg.exec() != QMessageBox.StandardButton.Ok:
+            return
+        self.lowlat.setChecked(True)
+        for key, on in rec.items():
+            self.lowlat_checks[key].setChecked(on)
+        if size_hint:
+            self.max_size.setValue(1920)
+        if enc.startswith("c2.android"):
+            self.encoder.setCurrentIndex(0)
+        self.log.emit("Bajar latencia: opciones marcadas; guarda y vuelve a abrir el juego")
+
+    def clear_lowlat(self):
+        for chk in self.lowlat_checks.values():
+            chk.setChecked(False)
+        self.lowlat.setChecked(False)
 
     def _update_preview(self):
         try:
@@ -1089,7 +1313,7 @@ class ScrcpyTab(QWidget):
                 center = QPoint(vals["x"] + vals["width"] // 2, vals["y"] + vals["height"] // 2)
                 g = (QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()).geometry()
                 window = (g.x(), g.y(), g.width(), g.height())
-            cmd = C.build_scrcpy_cmd(vals, window, keyboard=self.keyboard_mode)
+            cmd = C.build_scrcpy_cmd(vals, window, self._version(), keyboard=self.keyboard_mode)
             env = C.scrcpy_env_overrides(vals, self.keyboard_mode)
             prefix = " ".join(f"{k}={v}" for k, v in env.items())
             self.preview.setPlainText((prefix + " " if prefix else "") + " ".join(cmd))
@@ -1120,6 +1344,19 @@ class ScrcpyTab(QWidget):
         self.rotate_fit.setCurrentIndex(max(0, self.rotate_fit.findData(sc.get("rotate_fit", "screen"))))
         self.connection.setCurrentIndex(max(0, self.connection.findData(sc.get("connection", "usb"))))
         self.wifi_address.setText(sc.get("wifi_address", ""))
+        self.max_size.setValue(int(sc.get("max_size") or 0))
+        self.no_audio.setChecked(bool(sc.get("no_audio")))
+        self._wanted_encoder = (sc.get("encoder", ""), sc.get("encoder_codec", ""))
+        self._enc_choice = {}
+        self._fill_encoders()
+        self.lowlat.setChecked(bool(sc.get("lowlat_enabled")))
+        for k, chk in self.lowlat_checks.items():
+            chk.setChecked(bool(sc.get(k)))
+        self._soc = (sc.get("soc_vendor", ""), sc.get("soc", "")) if sc.get("soc") else None
+        self.soc_label.setText(sc.get("soc") or "sin detectar (pulsa Detectar con el celular conectado)")
+        ver = self._version()
+        self.version_label.setText(f"{ver[0]}.{ver[1]}" + ("  (ya trae tiempo real)" if ver >= (4, 0) else "")
+                                   if ver else "no encontrado")
         self._sync()
         self._update_preview()
 
@@ -1303,6 +1540,24 @@ class ScrcpyTab(QWidget):
 
 # ================================================================ inicio: app o solo pantalla
 APPS_CACHE = C.CONFIG_DIR / "apps.json"
+ENCODERS_CACHE = C.CONFIG_DIR / "encoders.json"
+
+
+def load_json_cache(path, key):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return [list(x) for x in json.load(f).get(key, []) if isinstance(x, (list, tuple))]
+    except (OSError, ValueError, AttributeError, TypeError):
+        return []
+
+
+def save_json_cache(path, key, items):
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({key: [list(x) for x in items]}, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
 
 
 def load_apps_cache():

@@ -17,7 +17,7 @@ from keycodes import e
 
 IS_WINDOWS = os.name == "nt"
 APP_NAME = "kb2pad-dock"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.3.0"
 
 if IS_WINDOWS:
     CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "kb2pad"
@@ -236,7 +236,7 @@ def guess_icon(name):
     return "letter"
 
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 DEFAULT_CONFIG = {
     "version": CONFIG_VERSION,
@@ -286,6 +286,18 @@ DEFAULT_CONFIG = {
         "height": 887,
         "force_x11": False,
         "extra_args": "",
+        "max_size": 0,                      # lado mayor del video en px (0 = resolucion original)
+        "no_audio": False,                  # sin audio en la PC (suena el celular)
+        "encoder": "",                      # codificador del celular ("" = el de por defecto)
+        "encoder_codec": "",                # codec al que pertenece ese codificador
+        # optimizacion del codificador (avanzado, apagado por defecto)
+        "lowlat_enabled": False,
+        "lowlat_realtime": False,           # priority=0, latency=1 (scrcpy < 4.0; despues ya viene)
+        "lowlat_bframes": False,            # max-bframes=0
+        "lowlat_qcom": False,               # vendor.qti-ext-enc-low-latency.enable=1
+        "lowlat_mtk": False,                # mtk.ext.venc.scenario.based.sdk.mode=1
+        "soc": "",                          # chip detectado (texto)
+        "soc_vendor": "",                   # qcom | mtk | exynos | tensor | unisoc | kirin | other
         "launch_app": True,                 # abre el juego en el cel antes de scrcpy
         "package": "com.garena.game.mho",
         "ask_on_start": True,               # preguntar: abrir una app o solo mostrar la pantalla
@@ -376,6 +388,35 @@ def _migrate_v4(out):
         sc["rotate_fit"] = "screen" if sc.get("keep_geometry") else "off"
 
 
+def _migrate_v5(out):
+    """v4 -> v5: --max-size, --no-audio y --video-encoder pasan de 'argumentos extra' a sus campos."""
+    sc = out.get("scrcpy")
+    if not isinstance(sc, dict) or not sc.get("extra_args"):
+        return
+    try:
+        tokens = shlex.split(sc["extra_args"])
+    except ValueError:
+        return
+    keep, i = [], 0
+    while i < len(tokens):
+        t = tokens[i]
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+        m = re.fullmatch(r"(?:--max-size=|-m)(\d+)", t)
+        if m:
+            sc["max_size"] = int(m.group(1))
+        elif t in ("--max-size", "-m") and nxt and nxt.isdigit():
+            sc["max_size"] = int(nxt)
+            i += 1
+        elif t == "--no-audio":
+            sc["no_audio"] = True
+        elif t.startswith("--video-encoder="):
+            sc["encoder"], sc["encoder_codec"] = t.split("=", 1)[1], sc.get("codec", "h265")
+        else:
+            keep.append(t)
+        i += 1
+    sc["extra_args"] = shlex.join(keep)
+
+
 def normalize(data):
     """Rellena lo que falte con los defaults (por si el archivo es viejo o se edito a mano)."""
     out = copy.deepcopy(data) if isinstance(data, dict) else {}
@@ -383,6 +424,8 @@ def normalize(data):
     _migrate(out)
     if old_version < 4:
         _migrate_v4(out)
+    if old_version < 5:
+        _migrate_v5(out)
     base = default_config()
     for key, val in base.items():
         if key not in out:
@@ -404,6 +447,10 @@ def normalize(data):
     sc = out["scrcpy"]
     if sc.get("rotate_fit") not in ROTATE_FIT:
         sc["rotate_fit"] = "screen"
+    try:
+        sc["max_size"] = max(0, int(sc.get("max_size") or 0))
+    except (TypeError, ValueError):
+        sc["max_size"] = 0
     if sc.get("connection") not in ("usb", "wifi"):
         sc["connection"] = "usb"
     if out.get("start_mode") not in mode_names(out):
@@ -544,6 +591,11 @@ def validate(cfg):
         shlex.split(cfg["scrcpy"].get("extra_args", ""))
     except ValueError as exc:
         errors.append(f"scrcpy: argumentos extra invalidos ({exc})")
+    extra = cfg["scrcpy"].get("extra_args", "")
+    for flag, field in (("--max-size", "Resolucion maxima"), ("--no-audio", "Sin audio"),
+                        ("--video-encoder", "Codificador")):
+        if flag in extra:
+            warnings.append(f"scrcpy: '{flag}' en argumentos extra; usa el campo '{field}' de la pestaña Juego")
     if cfg["scrcpy"].get("connection") == "wifi" and not cfg["scrcpy"].get("wifi_address", "").strip():
         warnings.append("Modo red sin direccion IP: se usara el serial/cable")
 
@@ -599,6 +651,12 @@ def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled"):
     cmd += [f"--video-codec={sc['codec']}",
             f"--video-bit-rate={sc['bitrate']}",
             f"--max-fps={int(sc['max_fps'])}"]
+    if sc.get("encoder") and sc.get("encoder_codec") == sc["codec"]:
+        cmd.append(f"--video-encoder={sc['encoder']}")
+    if int(sc.get("max_size") or 0) > 0:
+        cmd.append(f"--max-size={int(sc['max_size'])}")
+    if sc.get("no_audio"):
+        cmd.append("--no-audio")
     if sc.get("no_mipmaps"):
         cmd.append("--no-mipmaps")
     if sc.get("stay_awake"):
@@ -614,7 +672,115 @@ def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled"):
     if (version and tuple(version) >= (4, 0) and sc.get("rotate_fit") == "screen"
             and "--no-window-aspect-ratio-lock" not in extra):
         cmd.append("--no-window-aspect-ratio-lock")
-    return cmd + extra
+    # opciones del codificador: las de la seccion avanzada + las que pusiste a mano, en un solo argumento
+    user_opts, rest, i = [], [], 0
+    while i < len(extra):
+        t = extra[i]
+        if t.startswith("--video-codec-options="):
+            user_opts += [o for o in t.split("=", 1)[1].split(",") if o]
+        elif t == "--video-codec-options" and i + 1 < len(extra):
+            user_opts += [o for o in extra[i + 1].split(",") if o]
+            i += 1
+        else:
+            rest.append(t)
+        i += 1
+    user_keys = {o.split("=", 1)[0].split(":", 1)[0] for o in user_opts}
+    opts = user_opts + [o for o in codec_options(sc, version)
+                        if o.split("=", 1)[0].split(":", 1)[0] not in user_keys]
+    if opts:
+        cmd.append("--video-codec-options=" + ",".join(opts))
+    return cmd + rest
+
+
+# ---------------------------------------------------------------- optimizacion del codificador
+LOWLAT_OPTIONS = {
+    # clave de config: (opciones, texto, advertencia)
+    "lowlat_realtime": (["priority=0", "latency=1"], "Tiempo real (priority=0, latency=1)",
+                        "Codifica con prioridad de tiempo real y entrega cada frame en cuanto lo tiene. "
+                        "scrcpy 4.0 o mas reciente ya lo hace solo; con esas versiones no se manda."),
+    "lowlat_bframes": (["max-bframes=0"], "Sin B-frames (max-bframes=0)",
+                       "Los B-frames esperan al frame siguiente y agregan retraso. Casi todos los "
+                       "codificadores de celular ya no los usan; el video puede pesar un poco mas."),
+    "lowlat_qcom": (["vendor.qti-ext-enc-low-latency.enable=1"], "Qualcomm: modo de baja latencia",
+                    "Recorta 1-2 frames segun las pruebas de los desarrolladores de scrcpy. Puede bajar la "
+                    "calidad en movimiento (imagen con bloques), sobre todo en chips viejos, y calentar mas."),
+    "lowlat_mtk": (["mtk.ext.venc.scenario.based.sdk.mode=1"], "MediaTek: modo conferencia",
+                   "Modo de MediaTek que prioriza el retraso bajo. Solo existe en chips con su SDK de video "
+                   "2.0; si el chip no lo tiene lo ignora. Puede bajar la calidad."),
+}
+SOC_NAMES = {"qcom": "Qualcomm Snapdragon", "mtk": "MediaTek", "exynos": "Samsung Exynos",
+             "tensor": "Google Tensor", "unisoc": "Unisoc", "kirin": "HiSilicon Kirin", "other": "Desconocido"}
+
+
+def codec_options(sc, version=None):
+    """Opciones del codificador de la seccion avanzada (solo si esta activada)."""
+    if not sc.get("lowlat_enabled"):
+        return []
+    opts = []
+    for key, (values, _label, _warn) in LOWLAT_OPTIONS.items():
+        if not sc.get(key):
+            continue
+        if key == "lowlat_realtime" and version and tuple(version) >= (4, 0):
+            continue                      # ya viene en scrcpy 4.0+
+        opts += values
+    return opts
+
+
+def recommended_lowlat(vendor, version=None):
+    """Lo que 'Bajar latencia' activa segun el chip."""
+    rec = {"lowlat_realtime": not (version and tuple(version) >= (4, 0)), "lowlat_bframes": True,
+           "lowlat_qcom": vendor == "qcom", "lowlat_mtk": vendor == "mtk"}
+    return rec
+
+
+def detect_soc(props, encoders=()):
+    """props: dict de getprop; encoders: nombres de codificadores. -> (fabricante, texto)."""
+    p = {k: (v or "").strip() for k, v in (props or {}).items()}
+    man = p.get("ro.soc.manufacturer", "").lower()
+    model = p.get("ro.soc.model", "")
+    plat = (p.get("ro.board.platform") or p.get("ro.hardware.chipname") or p.get("ro.hardware") or "").lower()
+    vendor = None
+    for keys, v in ((("qti", "qualcomm"), "qcom"), (("mediatek",), "mtk"), (("google",), "tensor"),
+                    (("samsung",), "exynos"), (("unisoc", "spreadtrum"), "unisoc"), (("hisilicon",), "kirin")):
+        if any(k in man for k in keys):
+            vendor = v
+            break
+    if vendor is None and plat:
+        if re.match(r"(msm|sdm|sm\d|qcom|kona|lahaina|taro|kalama|pineapple|sun|canoe|parrot|crow|holi|bengal|"
+                    r"lito|trinket|atoll|yupik|cape|ukee|waipio|volcano|blair|cliffs)", plat):
+            vendor = "qcom"
+        elif re.match(r"mt\d|mt6|mt8", plat):
+            vendor = "mtk"
+        elif re.match(r"(gs\d|zuma|zumapro|laguna)", plat):
+            vendor = "tensor"
+        elif re.match(r"(exynos|s5e|universal)", plat):
+            vendor = "exynos"
+        elif re.match(r"(ums|sp\d|sc\d|t\d{3})", plat):
+            vendor = "unisoc"
+        elif re.match(r"(kirin|hi\d)", plat):
+            vendor = "kirin"
+    if vendor is None:
+        names = " ".join(encoders).lower()
+        for keys, v in ((("c2.qti", "omx.qcom"), "qcom"), (("c2.mtk", "omx.mtk"), "mtk"),
+                        (("c2.exynos", "omx.exynos", "c2.sec"), "exynos"), (("sprd", "unisoc"), "unisoc"),
+                        (("hisi",), "kirin")):
+            if any(k in names for k in keys):
+                vendor = v
+                break
+    vendor = vendor or "other"
+    detail = " / ".join(x for x in (model, plat) if x)
+    return vendor, SOC_NAMES[vendor] + (f" ({detail})" if detail else "")
+
+
+def parse_encoders(text):
+    """Salida de 'scrcpy --list-encoders' -> [(codec, codificador, tipo)] solo de video.
+    tipo: hw, sw, hybrid o '' (Android < 10 no lo dice)."""
+    out = []
+    for m in re.finditer(r"--video-codec=(\S+)\s+--video-encoder=(\S+)(?:\s+\((hw|sw|hybrid)\))?", text):
+        enc = (m.group(1), m.group(2), m.group(3) or "")
+        if enc not in out:
+            out.append(enc)
+    return out
 
 
 CHAT_KEYBOARDS = {"uhid": "Teclado fisico: Android oculta su teclado (recomendado)",

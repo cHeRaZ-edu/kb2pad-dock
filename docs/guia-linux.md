@@ -45,10 +45,10 @@ control.
 
 2. **Descarga kb2pad-dock.**
    En [Releases](https://github.com/cHeRaZ-edu/kb2pad-dock/releases) baja
-   `kb2pad-dock-v0.2.2-linux.tar.gz` y descomprímelo:
+   `kb2pad-dock-v0.3.0-linux.tar.gz` y descomprímelo:
    ```fish
    mkdir -p ~/Apps
-   tar xzf ~/Descargas/kb2pad-dock-v0.2.2-linux.tar.gz -C ~/Apps
+   tar xzf ~/Descargas/kb2pad-dock-v0.3.0-linux.tar.gz -C ~/Apps
    ```
    O clona el repo:
    ```fish
@@ -139,6 +139,12 @@ Si no ves el icono en la bandeja de KDE, abre la flecha de la bandeja → *Confi
 del sistema* → *Entradas* y pon **kb2pad-dock** en *Mostrar siempre*.
 
 La tabla de controles y de modos está en el [README](../README.md#controles-por-defecto).
+
+**Si sientes retraso en la imagen**: en la pestaña *Juego (scrcpy)* pon *Codec* `h264`,
+*Resolución máxima* `1920` y, en *Codificador*, pulsa *Buscar codificadores* y elige uno de
+hardware. Para ir más allá está *Optimización del codificador (avanzado)* con el botón
+**Bajar latencia (automático)**; viene apagada y te muestra sus advertencias antes de aplicar
+(ver el [README](../README.md#bajar-el-retraso-del-video)).
 
 ## Parte 5. Apagar la pantalla del celular
 

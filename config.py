@@ -279,7 +279,7 @@ DEFAULT_CONFIG = {
         "camera_pos": [0.72, 0.45],         # donde baja el dedo de la camara
         "camera_radius": 0.20,              # cuanto se desliza antes de levantarse y volver al centro
         "camera_smooth": 0.5,               # 0 = el dedo brinca directo; mas alto = mas suave (y un poco mas lento)
-        "camera_mode": "drag",              # drag = recentra en el borde; vector = se queda empujado hasta que paras
+        "camera_mode": "drag",              # drag = sigue al mouse y recentra; vector = apunta segun la velocidad del mouse
         "sensitivity": 1.0,                 # pixeles del celular por cuenta del mouse
         # {"name", "pos": [x, y], "inputs": [["KEY_E"], ["BTN_LEFT", "BTN_RIGHT"]],
         #  "radial": False, "radial_r": 0.12, "modes": []}   (modes vacio = todos)

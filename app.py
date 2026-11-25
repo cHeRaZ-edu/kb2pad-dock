@@ -2606,14 +2606,15 @@ class TouchTab(QWidget):
         form.addRow("", BindingDialog._hint("Una zona libre de la pantalla donde deslizar mueve la camara "
                                             "(sin botones encima)."))
         self.cam_mode = QComboBox()
-        self.cam_mode.addItem("Deslizar: en el borde se levanta y recentra", "drag")
-        self.cam_mode.addItem("Vector: se queda empujado hasta que paras el mouse", "vector")
-        form.addRow("Al llegar al borde:", self.cam_mode)
-        form.addRow("", BindingDialog._hint("Vector sirve si la camara del juego sigue girando con el dedo quieto "
-                                            "lejos de donde toco (como un joystick). Si solo gira mientras el dedo "
-                                            "se desliza, usa Deslizar."))
+        self.cam_mode.addItem("Deslizar: el dedo sigue al mouse y recentra en el borde", "drag")
+        self.cam_mode.addItem("Vector: el dedo apunta hacia donde va el mouse (sin radio)", "vector")
+        form.addRow("Modo:", self.cam_mode)
+        form.addRow("", BindingDialog._hint("Vector: el dedo se queda presionado en su punto y se aleja en la "
+                                            "direccion del mouse, mas lejos entre mas rapido lo mueves; al parar "
+                                            "regresa y se levanta. El radio no se usa. Deslizar: el dedo recorre "
+                                            "lo mismo que el mouse."))
         self.cam_radius = _dspin(0.02, 0.6, 0.01, 2)
-        form.addRow("Recorrido / radio:", self.cam_radius)
+        form.addRow("Recorrido (Deslizar):", self.cam_radius)
         form.addRow("", BindingDialog._hint("Fraccion del alto de la pantalla. Mas grande = se recentra menos "
                                             "(mas fluido), pero la zona libre tiene que ser mas grande. Al "
                                             "recentrar, el dedo baja del lado contrario al movimiento."))

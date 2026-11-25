@@ -2605,8 +2605,15 @@ class TouchTab(QWidget):
         form.addRow("Donde baja el dedo:", row)
         form.addRow("", BindingDialog._hint("Una zona libre de la pantalla donde deslizar mueve la camara "
                                             "(sin botones encima)."))
+        self.cam_mode = QComboBox()
+        self.cam_mode.addItem("Deslizar: en el borde se levanta y recentra", "drag")
+        self.cam_mode.addItem("Vector: se queda empujado hasta que paras el mouse", "vector")
+        form.addRow("Al llegar al borde:", self.cam_mode)
+        form.addRow("", BindingDialog._hint("Vector sirve si la camara del juego sigue girando con el dedo quieto "
+                                            "lejos de donde toco (como un joystick). Si solo gira mientras el dedo "
+                                            "se desliza, usa Deslizar."))
         self.cam_radius = _dspin(0.02, 0.6, 0.01, 2)
-        form.addRow("Recorrido antes de recentrar:", self.cam_radius)
+        form.addRow("Recorrido / radio:", self.cam_radius)
         form.addRow("", BindingDialog._hint("Fraccion del alto de la pantalla. Mas grande = se recentra menos "
                                             "(mas fluido), pero la zona libre tiene que ser mas grande. Al "
                                             "recentrar, el dedo baja del lado contrario al movimiento."))
@@ -2650,6 +2657,7 @@ class TouchTab(QWidget):
             w.toggled.connect(self.changed.emit)
         for w in (self.cam_radius, self.cam_smooth, self.sens):
             w.valueChanged.connect(self.changed.emit)
+        self.cam_mode.currentIndexChanged.connect(self.changed.emit)
 
     def _sync(self, *_):
         on = self.enabled.isChecked()
@@ -2664,6 +2672,7 @@ class TouchTab(QWidget):
         self.lbl_cam.setText(_pos_text(self.cam_pos))
         self.cam_radius.setValue(float(t["camera_radius"]))
         self.cam_smooth.setValue(float(t["camera_smooth"]))
+        self.cam_mode.setCurrentIndex(max(0, self.cam_mode.findData(t.get("camera_mode", "drag"))))
         self.sens.setValue(float(t["sensitivity"]))
         self.buttons = copy.deepcopy(t["buttons"])
         self.refresh()
@@ -2676,6 +2685,7 @@ class TouchTab(QWidget):
             "camera_pos": list(self.cam_pos),
             "camera_radius": round(self.cam_radius.value(), 3),
             "camera_smooth": round(self.cam_smooth.value(), 3),
+            "camera_mode": self.cam_mode.currentData(),
             "sensitivity": round(self.sens.value(), 3),
             "buttons": self.buttons,
         }

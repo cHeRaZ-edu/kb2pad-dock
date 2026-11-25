@@ -232,6 +232,10 @@ class TouchConfig:
         self.cam_radius = float(t.get("camera_radius", 0.10))
         self.sens = float(t.get("sensitivity", 1.0))
         self.smooth = min(0.95, max(0.0, float(t.get("camera_smooth", 0.5))))
+        # drag = se desliza y al llegar al borde se levanta y recentra
+        # vector = el dedo nunca se suelta mientras mueves el mouse: se queda empujado en la direccion
+        #          (en el borde del radio) y se levanta cuando el mouse se detiene
+        self.cam_mode = t.get("camera_mode") if t.get("camera_mode") in ("drag", "vector") else "drag"
         self.buttons = [TouchButton(b, i) for i, b in enumerate(t.get("buttons") or [])]
         sc = raw.get("scrcpy") or {}
         self.adb = C.tool_path(sc, "adb")
@@ -412,6 +416,12 @@ class TouchLayer:
                 self.cam = {"f": [ax, ay], "s": [ax, ay], "t0": now, "sent": now, "last": now, "relift": None}
             self.cam["f"][0] += dx * self.cfg.sens
             self.cam["f"][1] += dy * self.cfg.sens
+            if self.cfg.cam_mode == "vector":           # el destino no pasa del borde: ahi se queda empujado
+                ax, ay = self._px(self.cfg.cam_pos)
+                vx, vy = self.cam["f"][0] - ax, self.cam["f"][1] - ay
+                d, r = math.hypot(vx, vy), self.cfg.cam_radius * self.client.h
+                if d > r:
+                    self.cam["f"] = [ax + vx / d * r, ay + vy / d * r]
             self.cam["in"] = self.cam.get("in", 0.0) + math.hypot(dx, dy) * self.cfg.sens
             self.cam["last"] = now
             return True
@@ -466,7 +476,7 @@ class TouchLayer:
             ax, ay = self._px(self.cfg.cam_pos)
             vx, vy = cam["s"][0] - ax, cam["s"][1] - ay
             d, r = math.hypot(vx, vy), self.cfg.cam_radius * c.h
-            if d > r:
+            if d > r and self.cfg.cam_mode == "drag":
                 # se salio del radio: se levanta y baja del lado contrario al movimiento, asi tiene
                 # casi dos radios de recorrido antes de volver a recentrar
                 c.up(PID_CAM, *cam["s"])

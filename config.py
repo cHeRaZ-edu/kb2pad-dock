@@ -272,6 +272,17 @@ DEFAULT_CONFIG = {
         "deadzone": 0.35,
         "release_delay": 0.06,
     },
+    # Toques en la pantalla del celular (ademas del control). Posiciones de 0 a 1 en horizontal.
+    "touch": {
+        "enabled": False,
+        "camera": False,                    # mouse-camara: arrastra un dedo en vez del stick derecho
+        "camera_pos": [0.72, 0.45],         # donde baja el dedo de la camara
+        "camera_radius": 0.10,              # cuanto se desliza antes de levantarse y volver al centro
+        "sensitivity": 1.0,                 # pixeles del celular por cuenta del mouse
+        # {"name", "pos": [x, y], "inputs": [["KEY_E"], ["BTN_LEFT", "BTN_RIGHT"]],
+        #  "radial": False, "radial_r": 0.12, "modes": []}   (modes vacio = todos)
+        "buttons": [],
+    },
     "scrcpy": {
         "scrcpy_dir": "",                   # carpeta de scrcpy/adb (vacio = buscar en el PATH)
         "serial": "",
@@ -549,6 +560,7 @@ def normalize(data):
     if sc.get("rotate_fit") not in ROTATE_FIT:
         sc["rotate_fit"] = "screen"
     _norm_hud(out["hud"])
+    _norm_touch(out["touch"])
     try:
         sc["max_size"] = max(0, int(sc.get("max_size") or 0))
     except (TypeError, ValueError):
@@ -558,6 +570,51 @@ def normalize(data):
     if out.get("start_mode") not in mode_names(out):
         out["start_mode"] = modes[0]["name"]
     return out
+
+
+def touch_button(name="", pos=(0.5, 0.5), inputs=(), radial=False, radial_r=0.12, modes=()):
+    return {"name": name, "pos": [round(float(pos[0]), 4), round(float(pos[1]), 4)],
+            "inputs": [list(c) for c in inputs], "radial": bool(radial),
+            "radial_r": float(radial_r), "modes": list(modes)}
+
+
+def _num(v, default, lo, hi):
+    try:
+        return min(hi, max(lo, float(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _pos(v, default):
+    try:
+        return [round(_num(v[0], default[0], 0, 1), 4), round(_num(v[1], default[1], 0, 1), 4)]
+    except (TypeError, IndexError, KeyError):
+        return list(default)
+
+
+def _norm_touch(t):
+    t["enabled"] = bool(t.get("enabled"))
+    t["camera"] = bool(t.get("camera"))
+    t["camera_pos"] = _pos(t.get("camera_pos"), [0.72, 0.45])
+    t["camera_radius"] = _num(t.get("camera_radius"), 0.10, 0.02, 0.6)
+    t["sensitivity"] = _num(t.get("sensitivity"), 1.0, 0.05, 20.0)
+    buttons = []
+    for b in t.get("buttons") or []:
+        if not isinstance(b, dict):
+            continue
+        chords = [[str(n) for n in c] for c in b.get("inputs") or [] if isinstance(c, (list, tuple)) and c]
+        buttons.append(touch_button(str(b.get("name") or ""), _pos(b.get("pos"), [0.5, 0.5]), chords,
+                                    bool(b.get("radial")), _num(b.get("radial_r"), 0.12, 0.02, 0.6),
+                                    [str(m) for m in b.get("modes") or []]))
+    t["buttons"] = buttons
+
+
+def chord_label(chord):
+    return " + ".join(input_label(n) for n in chord)
+
+
+def touch_inputs_label(inputs):
+    return "  |  ".join(chord_label(c) for c in inputs) or "-"
 
 
 def _norm_bindings(items):
@@ -687,6 +744,33 @@ def validate(cfg):
         if len(wheres) > 1:
             name = key.split("#")[0]
             warnings.append(f"'{input_label(name)}' se usa en varios lugares: " + "; ".join(wheres))
+
+    t = cfg.get("touch") or {}
+    modes = set(mode_names(cfg))
+    special = {cfg["special"].get("pause"), cfg["special"].get("mouselook")}
+    for i, b in enumerate(t.get("buttons") or [], 1):
+        where = f"Toque {i} ({b.get('name') or 'sin nombre'})"
+        if not b.get("inputs"):
+            errors.append(f"{where}: no tiene tecla")
+        for chord in b.get("inputs") or []:
+            for n in chord:
+                if check(n, where) and n in special:
+                    warnings.append(f"{where}: '{input_label(n)}' es una tecla especial; el toque no la recibe")
+        for m in b.get("modes") or []:
+            if m not in modes:
+                warnings.append(f"{where}: el modo '{m}' ya no existe")
+        if t.get("enabled"):
+            singles = {c[0] for c in b.get("inputs") or [] if len(c) == 1}
+            clash = {}
+            for m in cfg.get("modes") or []:
+                if b.get("modes") and m.get("name") not in b["modes"]:
+                    continue
+                for bd in m.get("bindings") or []:
+                    if bd.get("input") in singles and not bd.get("camera_only"):
+                        clash.setdefault(bd["input"], []).append(m.get("name"))
+            for n, ms in clash.items():
+                warnings.append(f"{where}: '{input_label(n)}' tambien es boton del control ({', '.join(ms)}); "
+                                "con los toques conectados gana el toque")
 
     for section, field in (("mouse", "full_speed"), ("radial", "radius")):
         try:

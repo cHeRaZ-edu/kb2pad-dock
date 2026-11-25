@@ -11,6 +11,7 @@ import types
 
 import config as C
 from keycodes import e
+from touch import TouchLayer
 
 LT, RT = "LT", "RT"
 OUT_CODES = {
@@ -57,6 +58,7 @@ class EngineConfig:
 
     def __init__(self, raw, mode=None):
         k = C.input_code
+        self.raw = raw                  # la capa de toques lee su seccion y la de scrcpy
         sp = raw["special"]
         self.toggle_key = k(sp["pause"])
         self.mouselook_key = k(sp["mouselook"])
@@ -171,6 +173,7 @@ class Mapper:
         self.ui = ui
         self.mice = mice
         self.cfg = cfg
+        self.touch = TouchLayer(cfg.raw, cfg.mode)
         self.debug = debug
         self.pressed = set()
         self.enabled = True
@@ -195,10 +198,19 @@ class Mapper:
         self.push()
         log(f"Modo: {cfg.mode}")
 
+    @property
+    def debug(self):
+        return self._debug
+
+    @debug.setter
+    def debug(self, on):
+        self._debug = bool(on)
+        self.touch.debug = self._debug
+
     # ---------- salida ----------
     def compute(self):
         cfg = self.cfg
-        p = self.pressed
+        p = self.pressed - self.touch.suppressed       # lo que se queda un toque no va al control
         st = {}
         mx, my = dir_xy(p, cfg.move_keys)
         st[(e.EV_ABS, e.ABS_X)], st[(e.EV_ABS, e.ABS_Y)] = unit_stick(mx, my)
@@ -251,7 +263,7 @@ class Mapper:
 
     # ---------- mouse ----------
     def update_grab(self):
-        want = self.enabled and (self.mouselook or self.radial_key is not None)
+        want = self.enabled and (self.mouselook or self.radial_key is not None or self.touch.radial_active)
         if want == self.grabbed:
             return
         for m in self.mice:
@@ -278,6 +290,7 @@ class Mapper:
         self.radial_out = (0.0, 0.0)
         self.radial_pending.clear()
         self.radial_release.clear()
+        self.touch.release_all()
 
     def set_config(self, cfg):
         self.release_all()
@@ -285,6 +298,7 @@ class Mapper:
         if self.cfg.mode in cfg.mode_maps:
             cfg.set_mode(self.cfg.mode)   # al recargar se queda en el mismo modo
         self.cfg = cfg
+        self.touch.set_config(cfg.raw, cfg.mode)
         self.reset_mouse_motion()
         self.update_grab()
         self.push()
@@ -302,6 +316,8 @@ class Mapper:
         self.combo_t.clear()
         self.combo_fired.clear()
         self.cfg.set_mode(name)
+        self.touch.release_all()           # cada modo puede tener sus propios toques
+        self.touch.set_mode(self.cfg.mode)
         self.reset_mouse_motion()
         self.update_grab()
         self.push()
@@ -316,6 +332,8 @@ class Mapper:
             self.prev_mode = cfg.mode
         self.chat = on
         if on:
+            self.touch.release_all()
+            self.update_grab()
             kb = {c for c in self.pressed if c < e.BTN_MISC and c not in cfg.alt_keys}
             self.pressed -= kb
             for d in (self.radial_pending, self.combo_t):
@@ -334,10 +352,16 @@ class Mapper:
 
     def set_mouselook(self, on):
         self.mouselook = on
+        self.touch.cam_release()
         self.reset_mouse_motion()
         self.pressed -= set(self.cfg.mouselook_buttons)
         self.update_grab()
-        log("Mouse = camara (stick derecho)" if on else "Mouse = normal (scrcpy)")
+        if not on:
+            log("Mouse = normal (scrcpy)")
+        elif self.touch.ready and self.touch.cfg.camera:
+            log("Mouse = camara (toque en pantalla)")
+        else:
+            log("Mouse = camara (stick derecho)")
         self.push()
 
     def radial_start(self, key):
@@ -398,6 +422,10 @@ class Mapper:
                         name = "WHEEL_RIGHT" if ev.value > 0 else "WHEEL_LEFT"
                     self.wheel_notch(C.WHEEL_CODES[name], abs(ev.value))
                 return
+            if self.radial_key is None and ev.code in (e.REL_X, e.REL_Y):
+                dx, dy = (ev.value, 0) if ev.code == e.REL_X else (0, ev.value)
+                if self.touch.mouse(dx, dy, self.mouselook):   # radial tactil o camara por toque
+                    return
             if self.radial_key is not None:
                 if ev.code == e.REL_X:
                     self.radial_move(ev.value, 0)
@@ -480,6 +508,13 @@ class Mapper:
             if ev.value == 1:
                 self.set_mouselook(not self.mouselook)
             return
+
+        if self.touch.ready:
+            self.touch.key(ev.code, ev.value == 1)
+            self.update_grab()                  # un radial tactil captura el mouse
+            if ev.value == 1 and ev.code in self.touch.suppressed:
+                self.push()                     # la tecla es de un toque: el control no la recibe
+                return
 
         if ev.code in cfg.radial_keys:
             if ev.value == 1:
@@ -592,6 +627,10 @@ class Mapper:
 
         if self.wheel:
             self._wheel_service(now, waits)
+
+        tw = self.touch.service(now)
+        if tw is not None:
+            waits.append(tw)
 
         for code, t0 in self.combo_t.items():
             if code in self.combo_fired:

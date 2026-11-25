@@ -18,10 +18,10 @@ import sys
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import (QEvent, QLibraryInfo, QLocale, QPoint, QProcess, QProcessEnvironment, QSize, Qt, QTimer,
-                          QTranslator, QUrl, pyqtSignal)
+from PyQt6.QtCore import (QEvent, QLibraryInfo, QLocale, QPoint, QPointF, QProcess, QProcessEnvironment, QRectF,
+                          QSize, Qt, QTimer, QTranslator, QUrl, pyqtSignal)
 from PyQt6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, QIcon, QKeySequence,
-                         QPainter)
+                         QPainter, QPen, QPixmap)
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
     QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
@@ -2217,6 +2217,529 @@ class ThermalTab(QWidget):
 
 
 # ================================================================ ventana principal
+# ================================================================ toques en pantalla
+def _qt_input_name(ev):
+    """Nombre evdev de una tecla de un QKeyEvent (o None)."""
+    if IS_WINDOWS:
+        sc = ev.nativeScanCode()
+        code = win_scan_to_code(sc & 0xFF, sc & 0x100, ev.nativeVirtualKey())
+        return C.code_to_name(code) if code else None
+    return C.code_to_name(ev.nativeScanCode() - 8)   # XKB keycode = evdev + 8
+
+
+class ChordCaptureDialog(QDialog):
+    """Graba una tecla o una combinacion: presiona todo junto y suelta."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Grabar tecla o combinacion")
+        self.setMinimumSize(420, 190)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.held, self.chord = set(), []
+        lay = QVBoxLayout(self)
+        msg = QLabel("Presiona una tecla o boton del mouse, o varios a la vez\n"
+                     "(ej. Click izq + Click der) y suelta.\n"
+                     "Con el cursor dentro de esta ventana.")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl = QLabel("...")
+        self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        f = self.lbl.font()
+        f.setPointSize(f.pointSize() + 3)
+        f.setBold(True)
+        self.lbl.setFont(f)
+        lay.addWidget(msg)
+        lay.addWidget(self.lbl)
+        self.timer = QTimer(self, singleShot=True, interval=8000, timeout=self.reject)
+        self.timer.start()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self.activateWindow()
+        self.setFocus()
+
+    def _press(self, name):
+        if not name:
+            return
+        self.timer.stop()
+        self.held.add(name)
+        if name not in self.chord:
+            self.chord.append(name)
+        self.lbl.setText(C.chord_label(self.chord))
+
+    def _release(self, name):
+        self.held.discard(name)
+        if not self.held and self.chord:
+            self.accept()
+
+    def event(self, ev):
+        t = ev.type()
+        if t == QEvent.Type.ShortcutOverride:
+            ev.accept()
+            return True
+        if t in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            if not ev.isAutoRepeat():
+                name = _qt_input_name(ev)
+                (self._press if t == QEvent.Type.KeyPress else self._release)(name)
+            return True
+        if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+            self._press(QT_MOUSE.get(ev.button()))
+            return True
+        if t == QEvent.Type.MouseButtonRelease:
+            self._release(QT_MOUSE.get(ev.button()))
+            return True
+        if t == QEvent.Type.Wheel and not self.chord:
+            d = ev.angleDelta()
+            if abs(d.y()) >= abs(d.x()) and d.y():
+                self.chord = ["WHEEL_UP" if d.y() > 0 else "WHEEL_DOWN"]
+            elif d.x():
+                self.chord = ["WHEEL_LEFT" if d.x() > 0 else "WHEEL_RIGHT"]
+            if self.chord:
+                self.accept()
+            return True
+        return super().event(ev)
+
+
+class ScreenCanvas(QWidget):
+    """Captura del celular; un click elige el punto."""
+    picked = pyqtSignal(float, float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pix = None
+        self.pos = None
+        self.radius = None            # fraccion del alto (circulo alrededor del punto)
+        self.others = []              # [(nombre, (x, y))]
+        self.setMinimumSize(640, 300)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def area(self):
+        if not self.pix:
+            return None
+        pw, ph = self.pix.width(), self.pix.height()
+        s = min(self.width() / pw, self.height() / ph)
+        w, h = pw * s, ph * s
+        return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor(20, 20, 24))
+        r = self.area()
+        if r is None:
+            p.setPen(QColor(170, 170, 170))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "Sin captura. Abre el juego en el celular y presiona 'Capturar pantalla'.")
+            return
+        p.drawPixmap(r.toRect(), self.pix)
+
+        def at(pos):
+            return QPointF(r.x() + pos[0] * r.width(), r.y() + pos[1] * r.height())
+
+        for name, pos in self.others:
+            c = at(pos)
+            p.setPen(QPen(QColor(255, 255, 255, 150), 2))
+            p.setBrush(QColor(255, 255, 255, 40))
+            p.drawEllipse(c, 10, 10)
+            p.drawText(QPointF(c.x() + 14, c.y() + 5), name)
+        if self.pos is not None:
+            c = at(self.pos)
+            if self.radius:
+                rr = self.radius * r.height()
+                p.setPen(QPen(QColor(80, 180, 255), 2, Qt.PenStyle.DashLine))
+                p.setBrush(QColor(80, 180, 255, 40))
+                p.drawEllipse(c, rr, rr)
+            p.setPen(QPen(QColor(255, 70, 70), 3))
+            p.setBrush(QColor(255, 70, 70, 90))
+            p.drawEllipse(c, 14, 14)
+            p.drawLine(QPointF(c.x() - 22, c.y()), QPointF(c.x() + 22, c.y()))
+            p.drawLine(QPointF(c.x(), c.y() - 22), QPointF(c.x(), c.y() + 22))
+
+    def _pick_at(self, pt):
+        r = self.area()
+        if r is None:
+            return
+        x = (pt.x() - r.x()) / r.width()
+        y = (pt.y() - r.y()) / r.height()
+        if 0 <= x <= 1 and 0 <= y <= 1:
+            self.pos = (round(x, 4), round(y, 4))
+            self.picked.emit(*self.pos)
+            self.update()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._pick_at(ev.position())
+
+    def mouseMoveEvent(self, ev):
+        if ev.buttons() & Qt.MouseButton.LeftButton:
+            self._pick_at(ev.position())
+
+
+class ScreenPickDialog(QDialog):
+    """Elegir un punto sobre una captura de la pantalla del celular (adb screencap)."""
+    shot_cache = None                 # la ultima captura (se comparte entre dialogos)
+
+    def __init__(self, sc, pos, title="Posicion en la pantalla", radius=None, others=(), parent=None):
+        super().__init__(parent)
+        self.sc = sc
+        self.setWindowTitle(title)
+        self.resize(1100, 640)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Haz click (o arrastra) donde esta el boton del juego. La captura tiene que ser "
+                             "con el juego abierto y el celular en horizontal."))
+        self.canvas = ScreenCanvas()
+        self.canvas.pos = tuple(pos) if pos else None
+        self.canvas.radius = radius
+        self.canvas.others = list(others)
+        self.canvas.pix = ScreenPickDialog.shot_cache
+        lay.addWidget(self.canvas, 1)
+        row = QHBoxLayout()
+        self.btn_shot = QPushButton("Capturar pantalla")
+        self.btn_shot.clicked.connect(self.capture)
+        row.addWidget(self.btn_shot)
+        self.status = QLabel()
+        row.addWidget(self.status, 1)
+        row.addWidget(QLabel("X:"))
+        self.sx = _dspin(0, 1, 0.005, 4)
+        row.addWidget(self.sx)
+        row.addWidget(QLabel("Y:"))
+        self.sy = _dspin(0, 1, 0.005, 4)
+        row.addWidget(self.sy)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        row.addWidget(buttons)
+        lay.addLayout(row)
+        p = self.canvas.pos or (0.5, 0.5)
+        self.sx.setValue(p[0])
+        self.sy.setValue(p[1])
+        self.canvas.picked.connect(lambda x, y: (self.sx.setValue(x), self.sy.setValue(y)))
+        self.sx.valueChanged.connect(self._spin)
+        self.sy.valueChanged.connect(self._spin)
+        self.proc = QProcess(self)
+        no_console(self.proc)
+        self.proc.finished.connect(self._shot_done)
+        if self.canvas.pix is None:
+            QTimer.singleShot(0, self.capture)
+
+    def _spin(self, *_):
+        self.canvas.pos = (round(self.sx.value(), 4), round(self.sy.value(), 4))
+        self.canvas.update()
+
+    def value(self):
+        return [round(self.sx.value(), 4), round(self.sy.value(), 4)]
+
+    def capture(self):
+        if self.proc.state() != QProcess.ProcessState.NotRunning:
+            return
+        if not C.tool_exists(self.sc, "adb"):
+            self.status.setText("No encontre adb (revisa la carpeta de scrcpy en la pestaña Juego).")
+            return
+        serial = C.effective_serial(self.sc)
+        self.status.setText("Capturando...")
+        self.btn_shot.setEnabled(False)
+        self.proc.start(C.tool_path(self.sc, "adb"),
+                        (["-s", serial] if serial else []) + ["exec-out", "screencap", "-p"])
+
+    def _shot_done(self, *_):
+        self.btn_shot.setEnabled(True)
+        data = bytes(self.proc.readAllStandardOutput())
+        pix = QPixmap()
+        if not data or not pix.loadFromData(data, "PNG"):
+            err = bytes(self.proc.readAllStandardError()).decode(errors="ignore").strip()
+            self.status.setText("No pude capturar" + (f": {err[:120]}" if err else " (¿celular conectado?)"))
+            return
+        ScreenPickDialog.shot_cache = pix
+        self.canvas.pix = pix
+        self.status.setText(f"Captura {pix.width()}x{pix.height()}" +
+                            ("  (esta en vertical: gira el juego y vuelve a capturar)"
+                             if pix.width() < pix.height() else ""))
+        self.canvas.update()
+
+
+def _pos_text(pos):
+    return f"({pos[0]:.3f}, {pos[1]:.3f})"
+
+
+class TouchButtonDialog(QDialog):
+    def __init__(self, b, sc, mode_names, others=(), parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Boton tactil")
+        self.setMinimumWidth(560)
+        self.sc = sc
+        self.others = list(others)
+        self.pos = list(b.get("pos") or [0.5, 0.5])
+        form = QFormLayout(self)
+
+        self.name = QLineEdit(b.get("name", ""))
+        self.name.setPlaceholderText("ej. Consumir, Fijar parte, Compañero")
+        form.addRow("Nombre:", self.name)
+
+        box = QVBoxLayout()
+        self.inputs = QListWidget()
+        self.inputs.setMaximumHeight(110)
+        for chord in b.get("inputs") or []:
+            self._add_item(chord)
+        box.addWidget(self.inputs)
+        row = QHBoxLayout()
+        for text, slot in (("Agregar tecla o combinacion...", self.add_chord), ("Quitar", self.remove_chord)):
+            btn = QPushButton(text)
+            btn.clicked.connect(slot)
+            row.addWidget(btn)
+        row.addStretch()
+        box.addLayout(row)
+        form.addRow("Se activa con:", box)
+        form.addRow("", BindingDialog._hint("Cada renglon es una forma de activarlo (ej. 'E' o 'Click izq + "
+                                            "Click der'). Si una combinacion se cumple, sus teclas no disparan "
+                                            "otros toques ni el control."))
+
+        row = QHBoxLayout()
+        self.lbl_pos = QLabel(_pos_text(self.pos))
+        btn = QPushButton("Elegir en la pantalla...")
+        btn.clicked.connect(self.pick)
+        row.addWidget(self.lbl_pos)
+        row.addWidget(btn)
+        row.addStretch()
+        form.addRow("Posicion:", row)
+
+        row = QHBoxLayout()
+        self.radial = QCheckBox("Radial: mientras se sostiene, el mouse arrastra el dedo")
+        self.radial.setChecked(bool(b.get("radial")))
+        self.radial_r = _dspin(0.02, 0.6, 0.01, 2)
+        self.radial_r.setValue(float(b.get("radial_r", 0.12)))
+        row.addWidget(self.radial)
+        row.addWidget(QLabel("alcance:"))
+        row.addWidget(self.radial_r)
+        row.addStretch()
+        form.addRow("Tipo:", row)
+        form.addRow("", BindingDialog._hint("Para el menu de objetos o fijar partes: tocar rapido = toque normal; "
+                                            "sostener = abres el menu y eliges con el mouse; al soltar se "
+                                            "levanta el dedo donde quedo. Alcance = fraccion del alto de la "
+                                            "pantalla."))
+        self.radial.toggled.connect(self.radial_r.setEnabled)
+        self.radial_r.setEnabled(self.radial.isChecked())
+
+        self.modes = QListWidget()
+        self.modes.setMaximumHeight(90)
+        for n in mode_names:
+            it = QListWidgetItem(n)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if n in (b.get("modes") or []) else Qt.CheckState.Unchecked)
+            self.modes.addItem(it)
+        form.addRow("Solo en modos:", self.modes)
+        form.addRow("", BindingDialog._hint("Ninguno marcado = en todos los modos."))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _add_item(self, chord):
+        it = QListWidgetItem(f"{C.chord_label(chord)}    [{' + '.join(chord)}]")
+        it.setData(Qt.ItemDataRole.UserRole, list(chord))
+        self.inputs.addItem(it)
+
+    def add_chord(self):
+        dlg = ChordCaptureDialog(self)
+        if dlg.exec() and dlg.chord:
+            chords = [self.inputs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.inputs.count())]
+            if sorted(dlg.chord) not in [sorted(c) for c in chords]:
+                self._add_item(dlg.chord)
+
+    def remove_chord(self):
+        for it in self.inputs.selectedItems():
+            self.inputs.takeItem(self.inputs.row(it))
+
+    def pick(self):
+        dlg = ScreenPickDialog(self.sc, self.pos, "Posicion del boton", others=self.others, parent=self)
+        if dlg.exec():
+            self.pos = dlg.value()
+            self.lbl_pos.setText(_pos_text(self.pos))
+
+    def _accept(self):
+        if not self.inputs.count():
+            QMessageBox.warning(self, "Boton tactil", "Agrega al menos una tecla o combinacion.")
+            return
+        self.accept()
+
+    def button(self):
+        chords = [self.inputs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.inputs.count())]
+        modes = [self.modes.item(i).text() for i in range(self.modes.count())
+                 if self.modes.item(i).checkState() == Qt.CheckState.Checked]
+        return C.touch_button(self.name.text().strip(), self.pos, chords, self.radial.isChecked(),
+                              round(self.radial_r.value(), 3), modes)
+
+
+class TouchTab(QWidget):
+    """Toques en la pantalla del celular: botones tactiles, radial tactil y mouse-camara por toque."""
+    changed = pyqtSignal()
+
+    def __init__(self, sc_provider, modes_provider, parent=None):
+        super().__init__(parent)
+        self.sc_provider = sc_provider
+        self.modes_provider = modes_provider
+        self.buttons = []
+        self.cam_pos = [0.72, 0.45]
+        lay = QVBoxLayout(self)
+
+        box = QGroupBox("Toques en pantalla")
+        v = QVBoxLayout(box)
+        self.enabled = QCheckBox("Activar toques en la pantalla del celular")
+        v.addWidget(self.enabled)
+        v.addWidget(BindingDialog._hint(
+            "Se conectan solos cuando el control y el juego estan abiertos (un segundo scrcpy-server, solo de "
+            "control). Una tecla que usa un toque deja de ir al control mientras los toques estan conectados; "
+            "si no se conectan, todo sigue funcionando con el control."))
+        lay.addWidget(box)
+
+        box = QGroupBox("Mouse-camara por toque")
+        form = QFormLayout(box)
+        self.camera = QCheckBox("Con mouse-camara activado, el mouse arrastra un dedo (en vez del stick derecho)")
+        form.addRow(self.camera)
+        row = QHBoxLayout()
+        self.lbl_cam = QLabel()
+        btn = QPushButton("Elegir en la pantalla...")
+        btn.clicked.connect(self.pick_camera)
+        row.addWidget(self.lbl_cam)
+        row.addWidget(btn)
+        row.addStretch()
+        form.addRow("Donde baja el dedo:", row)
+        form.addRow("", BindingDialog._hint("Una zona libre de la pantalla donde deslizar mueve la camara "
+                                            "(sin botones encima)."))
+        self.cam_radius = _dspin(0.02, 0.6, 0.01, 2)
+        form.addRow("Recorrido antes de recentrar:", self.cam_radius)
+        form.addRow("", BindingDialog._hint("Fraccion del alto de la pantalla. Mas chico = cabe mejor en la zona, "
+                                            "pero el dedo se recentra mas seguido."))
+        self.sens = _dspin(0.05, 20.0, 0.05, 2)
+        form.addRow("Sensibilidad:", self.sens)
+        form.addRow("", BindingDialog._hint("Pixeles del celular por cada cuenta del mouse (camara y radial tactil)."))
+        lay.addWidget(box)
+
+        box = QGroupBox("Botones tactiles")
+        v = QVBoxLayout(box)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Nombre", "Se activa con", "Posicion", "Tipo", "Modos"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setMinimumHeight(180)
+        hdr = self.table.horizontalHeader()
+        for col in (0, 2, 3, 4):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.doubleClicked.connect(self.edit)
+        v.addWidget(self.table)
+        row = QHBoxLayout()
+        for text, slot in (("Agregar", self.add), ("Editar", self.edit), ("Duplicar", self.duplicate),
+                           ("Eliminar", self.remove)):
+            b = QPushButton(text)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        row.addStretch()
+        v.addLayout(row)
+        lay.addWidget(box)
+        lay.addStretch()
+
+        self.enabled.toggled.connect(self._sync)
+        for w in (self.enabled, self.camera):
+            w.toggled.connect(self.changed.emit)
+        for w in (self.cam_radius, self.sens):
+            w.valueChanged.connect(self.changed.emit)
+
+    def _sync(self, *_):
+        on = self.enabled.isChecked()
+        for w in self.findChildren(QGroupBox)[1:]:
+            w.setEnabled(on)
+
+    def load(self, cfg):
+        t = cfg["touch"]
+        self.enabled.setChecked(bool(t["enabled"]))
+        self.camera.setChecked(bool(t["camera"]))
+        self.cam_pos = list(t["camera_pos"])
+        self.lbl_cam.setText(_pos_text(self.cam_pos))
+        self.cam_radius.setValue(float(t["camera_radius"]))
+        self.sens.setValue(float(t["sensitivity"]))
+        self.buttons = copy.deepcopy(t["buttons"])
+        self.refresh()
+        self._sync()
+
+    def store(self, cfg):
+        cfg["touch"] = {
+            "enabled": self.enabled.isChecked(),
+            "camera": self.camera.isChecked(),
+            "camera_pos": list(self.cam_pos),
+            "camera_radius": round(self.cam_radius.value(), 3),
+            "sensitivity": round(self.sens.value(), 3),
+            "buttons": self.buttons,
+        }
+
+    def refresh(self, select=None):
+        self.table.setRowCount(len(self.buttons))
+        for r, b in enumerate(self.buttons):
+            kind = f"Radial (alcance {b.get('radial_r', 0.12):.2f})" if b.get("radial") else "Toque"
+            cells = [b.get("name") or f"Toque {r + 1}", C.touch_inputs_label(b.get("inputs") or []),
+                     _pos_text(b["pos"]), kind, ", ".join(b.get("modes") or []) or "Todos"]
+            for c, text in enumerate(cells):
+                self.table.setItem(r, c, QTableWidgetItem(text))
+        if select is not None and 0 <= select < len(self.buttons):
+            self.table.selectRow(select)
+
+    def current(self):
+        rows = self.table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def _others(self, skip=-1):
+        out = [(b.get("name") or f"Toque {i + 1}", b["pos"]) for i, b in enumerate(self.buttons) if i != skip]
+        if self.camera.isChecked():
+            out.append(("Camara", self.cam_pos))
+        return out
+
+    def _dialog(self, b, skip=-1):
+        return TouchButtonDialog(b, self.sc_provider(), self.modes_provider(), self._others(skip), self)
+
+    def add(self):
+        dlg = self._dialog(C.touch_button())
+        if dlg.exec():
+            self.buttons.append(dlg.button())
+            self.refresh(len(self.buttons) - 1)
+            self.changed.emit()
+
+    def edit(self, *_):
+        r = self.current()
+        if r < 0:
+            return
+        dlg = self._dialog(self.buttons[r], r)
+        if dlg.exec():
+            self.buttons[r] = dlg.button()
+            self.refresh(r)
+            self.changed.emit()
+
+    def duplicate(self):
+        r = self.current()
+        if r < 0:
+            return
+        self.buttons.insert(r + 1, copy.deepcopy(self.buttons[r]))
+        self.refresh(r + 1)
+        self.changed.emit()
+
+    def remove(self):
+        r = self.current()
+        if r < 0:
+            return
+        del self.buttons[r]
+        self.refresh(min(r, len(self.buttons) - 1))
+        self.changed.emit()
+
+    def pick_camera(self):
+        others = [(b.get("name") or f"Toque {i + 1}", b["pos"]) for i, b in enumerate(self.buttons)]
+        dlg = ScreenPickDialog(self.sc_provider(), self.cam_pos, "Zona de la camara",
+                               radius=self.cam_radius.value(), others=others, parent=self)
+        if dlg.exec():
+            self.cam_pos = dlg.value()
+            self.lbl_cam.setText(_pos_text(self.cam_pos))
+            self.changed.emit()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, path):
         super().__init__()
@@ -2276,13 +2799,15 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.t_bind, "Botones")
         self.tabs.addTab(scrolled(self.t_sticks), "Sticks y teclas especiales")
         self.tabs.addTab(scrolled(self.t_mouse), "Mouse y radial")
+        self.t_touch = TouchTab(lambda: self.t_scrcpy.values(), lambda: [m["name"] for m in self.t_bind.modes])
+        self.tabs.addTab(scrolled(self.t_touch), "Toques en pantalla")
         self.tabs.addTab(scrolled(self.t_scrcpy), "Juego (scrcpy)")
         self.t_thermal = ThermalTab()
         self.tabs.addTab(scrolled(self.t_thermal), "Temperatura y HUD")
         self.t_thermal.changed.connect(self.mark_dirty)
         self.t_thermal.test_hud.connect(self.test_hud)
         self.t_thermal.changed.connect(lambda: hasattr(self, "hud") and self._update_hud())
-        for t in (self.t_bind, self.t_sticks, self.t_mouse, self.t_scrcpy):
+        for t in (self.t_bind, self.t_sticks, self.t_mouse, self.t_touch, self.t_scrcpy):
             t.changed.connect(self.mark_dirty)
         self.t_scrcpy.log.connect(self.append_log)
         self.t_sticks.keyboard_settings.connect(self.open_keyboard_settings)
@@ -2465,6 +2990,7 @@ class MainWindow(QMainWindow):
         self.t_bind.load(self.cfg)
         self.t_sticks.load(self.cfg)
         self.t_mouse.load(self.cfg)
+        self.t_touch.load(self.cfg)
         self.t_scrcpy.load(self.cfg)
         self.t_thermal.load(self.cfg)
         if self.tray:
@@ -2475,6 +3001,7 @@ class MainWindow(QMainWindow):
     def collect(self):
         self.t_sticks.store(self.cfg)
         self.t_mouse.store(self.cfg)
+        self.t_touch.store(self.cfg)
         self.t_scrcpy.store(self.cfg)
         self.t_thermal.store(self.cfg)
         self.t_bind.store(self.cfg)
@@ -2585,6 +3112,7 @@ class MainWindow(QMainWindow):
         elif line == "ACTIVO":
             self._connected, self._paused = True, False
             self._update_tray()
+            self._touch_link()
         elif line == "PAUSADO":
             self._paused = True
             self._update_tray()
@@ -2830,8 +3358,15 @@ class MainWindow(QMainWindow):
         g = (scr or self._game_screen()).geometry()
         return g.x(), g.y(), g.width(), g.height()
 
+    def _touch_link(self, on=True):
+        """Toques en pantalla: el motor se conecta al celular cuando el control y el juego estan abiertos
+        (asi adb ya corre como tu usuario aunque el motor use pkexec)."""
+        if self.engine_running() and (not on or self.game_running()):
+            self.engine.write(b"touch on\n" if on else b"touch off\n")
+
     def _on_game_started(self):
         sc = self.cfg["scrcpy"]
+        QTimer.singleShot(1500, self._touch_link)
         self._thermal_start()
         self._apply_hud_state()
         QTimer.singleShot(2500, self._device_info_poll)
@@ -3337,6 +3872,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(400, self._launch_scrcpy)
             return
         self._thermal_stop()
+        self._touch_link(False)
         self._dev_fps = None
         self._remove_game_fps()
         self._apply_hud_state()

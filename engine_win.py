@@ -8,7 +8,7 @@ kb2pad engine para Windows - teclado + mouse -> control Xbox 360 virtual.
   mientras el mouse esta capturado, usa el movimiento del hook como respaldo.
 
 Lo lanza la GUI:  kb2pad.exe --engine --config <ruta> [--debug]
-Comandos por stdin: reload | debug on | debug off | quit
+Comandos por stdin: reload | debug on | debug off | touch on | touch off | quit
 """
 import argparse
 import ctypes
@@ -688,6 +688,10 @@ def main(argv=None):
                     elif cmd in ("debug on", "debug off"):
                         mapper.debug = cmd.endswith("on")
                         log("Debug de teclas " + ("activado" if mapper.debug else "desactivado"))
+                    elif cmd == "touch on":
+                        mapper.touch.connect()
+                    elif cmd == "touch off":
+                        mapper.touch.disconnect()
 
             hooks.shield = mapper.enabled and not mapper.chat
             hooks.alt_hotkeys = mapper.cfg.alt_hotkeys if mapper.enabled else frozenset()
@@ -715,6 +719,7 @@ def main(argv=None):
             mapper.mouselook = False
             mapper.update_grab()
             mapper.push()
+            mapper.touch.close()
         finally:
             hooks.stop()
             pad.close()

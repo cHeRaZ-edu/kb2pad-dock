@@ -217,6 +217,27 @@ normal.
   sin teclado y el chat no escribe.
 - En el chat solo cuenta el **Alt izquierdo**, porque `AltGr + Q` escribe `@`.
 
+## Toques en pantalla
+
+Además del control, kb2pad puede **tocar la pantalla del celular**. Sirve para los botones que el
+juego solo tiene en pantalla y para mover la cámara con el mouse como si deslizaras el dedo. Se
+configura en la pestaña **Toques en pantalla**:
+
+- **Botones táctiles**: un toque en un punto de la pantalla mientras sostienes su tecla. Cada botón
+  puede activarse con varias teclas o **combinaciones** (ej. `E` o `Click izq + Click der`). Si una
+  combinación se cumple, sus teclas no disparan el control ni otros toques.
+- **Radial táctil**: tocar rápido es un toque normal; al sostener, el mouse arrastra el dedo (menú de
+  objetos, fijar partes del monstruo) y al soltar se levanta donde quedó.
+- **Mouse-cámara por toque**: con mouse-cámara activado (`Bloq Mayús`), el mouse desliza un dedo en
+  una zona libre de la pantalla en vez de mover el stick derecho.
+- La posición se elige con un click sobre una **captura del celular** (*Elegir en la pantalla...*).
+  Cada botón puede limitarse a ciertos **modos**.
+
+Los toques se conectan solos cuando el control y el juego están abiertos: kb2pad arranca un segundo
+`scrcpy-server` **solo de control** (sin video) con el mismo scrcpy que usas para el juego. Mientras
+están conectados, una tecla que usa un toque deja de ir al control; si no se conectan, todo sigue
+funcionando con el control.
+
 ## Iniciar el juego
 
 Con **Iniciar juego** (o **Iniciar todo**) la app pregunta qué hacer:
@@ -373,6 +394,7 @@ calidad del video.
 |---|---|
 | `app.py` | La GUI (PyQt6). Es lo que abres. |
 | `core.py` | La lógica del mapeo: combos, radial, mouse-cámara. Es la misma en los dos sistemas. |
+| `touch.py` | Toques en pantalla: segundo scrcpy-server solo de control, botones táctiles y cámara por toque. |
 | `engine.py` | El control virtual en Linux (`evdev` / `uinput`). |
 | `engine_win.py` | El control virtual en Windows (ViGEmBus + hooks de teclado y mouse). |
 | `config.py` | Valores por defecto, carga, guardado y validación del `config.json`. |

@@ -8,8 +8,10 @@ en caliente cuando el archivo cambia, sin soltar el control virtual.
 Normalmente lo lanza app.py. Para usarlo solo:
     sudo python engine.py --config ~/.config/kb2pad/config.json [--debug]
 
-Comandos por stdin (uno por linea): reload | debug on | debug off | focus on | focus off | quit
+Comandos por stdin (uno por linea): reload | debug on | debug off | focus on | focus off |
+touch on | touch off | quit
 ("focus on" = la ventana del juego tiene el foco: la GUI lo avisa para activar el escudo del teclado)
+("touch on" = el juego ya esta abierto: conecta los toques en pantalla, si estan activados)
 Si stdin es una tuberia y se cierra, el motor termina (asi la GUI lo apaga aunque corra como root).
 """
 import argparse
@@ -270,6 +272,10 @@ def main(argv=None):
                             log("Debug de teclas " + ("activado" if mapper.debug else "desactivado"))
                         elif cmd in ("focus on", "focus off"):
                             game_focused = cmd.endswith("on")
+                        elif cmd == "touch on":
+                            mapper.touch.connect()
+                        elif cmd == "touch off":
+                            mapper.touch.disconnect()
                     continue
                 dev = fds.get(fd)
                 if dev is None:
@@ -308,6 +314,7 @@ def main(argv=None):
         mapper.mouselook = False
         mapper.update_grab()
         mapper.push()
+        mapper.touch.close()
         ui.close()
         log("Control virtual cerrado.")
 

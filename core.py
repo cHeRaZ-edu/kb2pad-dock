@@ -365,6 +365,7 @@ class Mapper:
         self.push()
 
     def radial_start(self, key):
+        self.touch.cam_release()           # el radial del control se queda con el mouse: se levanta el dedo de la camara
         self.radial_key = key
         self.radial_pos = [0.0, 0.0]
         self.radial_out = (0.0, 0.0)

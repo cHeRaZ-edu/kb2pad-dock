@@ -277,7 +277,8 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "camera": False,                    # mouse-camara: arrastra un dedo en vez del stick derecho
         "camera_pos": [0.72, 0.45],         # donde baja el dedo de la camara
-        "camera_radius": 0.10,              # cuanto se desliza antes de levantarse y volver al centro
+        "camera_radius": 0.20,              # cuanto se desliza antes de levantarse y volver al centro
+        "camera_smooth": 0.5,               # 0 = el dedo brinca directo; mas alto = mas suave (y un poco mas lento)
         "sensitivity": 1.0,                 # pixeles del celular por cuenta del mouse
         # {"name", "pos": [x, y], "inputs": [["KEY_E"], ["BTN_LEFT", "BTN_RIGHT"]],
         #  "radial": False, "radial_r": 0.12, "modes": []}   (modes vacio = todos)
@@ -596,7 +597,8 @@ def _norm_touch(t):
     t["enabled"] = bool(t.get("enabled"))
     t["camera"] = bool(t.get("camera"))
     t["camera_pos"] = _pos(t.get("camera_pos"), [0.72, 0.45])
-    t["camera_radius"] = _num(t.get("camera_radius"), 0.10, 0.02, 0.6)
+    t["camera_radius"] = _num(t.get("camera_radius"), 0.20, 0.02, 0.6)
+    t["camera_smooth"] = _num(t.get("camera_smooth"), 0.5, 0.0, 0.95)
     t["sensitivity"] = _num(t.get("sensitivity"), 1.0, 0.05, 20.0)
     buttons = []
     for b in t.get("buttons") or []:

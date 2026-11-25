@@ -33,8 +33,12 @@ PID_CAM = 10
 PID_BTN0 = 20               # botones: 20, 21, 22...
 
 SETTLE_S = 0.04             # el dedo baja y espera ~2 frames antes de moverse (si no, el juego no ve el arrastre)
+RESETTLE_S = 0.025          # igual, pero al recentrar la camara (mas corto para no cortar el giro)
+CATCHUP = 1.5               # el dedo alcanza al mouse a lo mucho 1.5x la velocidad del mouse (sin brincos)
 SEND_S = 0.004              # como maximo un movimiento cada 4 ms por dedo
 CAM_IDLE_S = 0.12           # mouse quieto: se levanta el dedo de la camara
+RELIFT_S = 0.016            # al recentrar: pausa (~1 frame) entre levantar y volver a poner el dedo
+RELIFT_BACK = 0.8           # al recentrar, el dedo baja del lado contrario (fraccion del radio)
 
 ACTION_DOWN, ACTION_UP, ACTION_MOVE = 0, 1, 2
 MSG_INJECT_TOUCH = 2
@@ -227,6 +231,7 @@ class TouchConfig:
         self.cam_pos = tuple(float(v) for v in (t.get("camera_pos") or (0.72, 0.45)))
         self.cam_radius = float(t.get("camera_radius", 0.10))
         self.sens = float(t.get("sensitivity", 1.0))
+        self.smooth = min(0.95, max(0.0, float(t.get("camera_smooth", 0.5))))
         self.buttons = [TouchButton(b, i) for i, b in enumerate(t.get("buttons") or [])]
         sc = raw.get("scrcpy") or {}
         self.adb = C.tool_path(sc, "adb")
@@ -249,9 +254,9 @@ class TouchLayer:
         self.combo_on = set()
         self.active = set()          # pids de botones tocando
         self.suppressed = frozenset()
-        self.rad = {}                # pid -> {"f", "t0", "pending", "sent"}
+        self.rad = {}                # pid -> {"f" destino, "s" enviado, "t0", "sent", "in", "rate"}
         self.rad_order = []
-        self.cam = None              # {"f", "t0", "last", "pending", "sent"} con el dedo abajo
+        self.cam = None              # igual que rad + "last" y "relift" (dedo arriba hasta ese momento)
         self.debug = False
         self._gen = 0
 
@@ -362,7 +367,7 @@ class TouchLayer:
             c.down(pid, x, y)
             if b.radial:
                 now = time.monotonic()
-                self.rad[pid] = {"f": [x, y], "t0": now, "pending": False, "sent": now}
+                self.rad[pid] = {"f": [x, y], "s": [x, y], "t0": now, "sent": now}
                 self.rad_order.append(pid)
                 self.cam_release()            # el mouse pasa al radial
         for pid in self.active - active:
@@ -371,7 +376,7 @@ class TouchLayer:
             if pid in self.rad_order:
                 self.rad_order.remove(pid)
             if st:
-                c.up(pid, *st["f"])
+                c.up(pid, *st["s"])
             elif b:
                 c.up(pid, *self._px(b.pos))
         self.active = active
@@ -396,24 +401,25 @@ class TouchLayer:
                 d, lim = math.hypot(fx - bx, fy - by), b.radial_r * h
                 if d > lim:                    # se queda en el borde, no se levanta
                     fx, fy = bx + (fx - bx) / d * lim, by + (fy - by) / d * lim
-                st["f"], st["pending"] = [fx, fy], True
+                st["f"] = [fx, fy]
+                st["in"] = st.get("in", 0.0) + math.hypot(dx, dy) * self.cfg.sens
             return True
         if mouselook and self.cfg.camera:
             now = time.monotonic()
             if self.cam is None:
                 ax, ay = self._px(self.cfg.cam_pos)
                 self.client.down(PID_CAM, ax, ay)
-                self.cam = {"f": [ax, ay], "t0": now, "last": now, "pending": False, "sent": now}
+                self.cam = {"f": [ax, ay], "s": [ax, ay], "t0": now, "sent": now, "last": now, "relift": None}
             self.cam["f"][0] += dx * self.cfg.sens
             self.cam["f"][1] += dy * self.cfg.sens
+            self.cam["in"] = self.cam.get("in", 0.0) + math.hypot(dx, dy) * self.cfg.sens
             self.cam["last"] = now
-            self.cam["pending"] = True
             return True
         return False
 
     def cam_release(self):
-        if self.cam is not None and self.client is not None:
-            self.client.up(PID_CAM, *self.cam["f"])
+        if self.cam is not None and self.client is not None and self.cam["relift"] is None:
+            self.client.up(PID_CAM, *self.cam["s"])
         self.cam = None
 
     # ---------- tiempo
@@ -430,33 +436,75 @@ class TouchLayer:
         c = self.client
         waits = []
         for pid, st in self.rad.items():
-            if st["pending"]:
+            if st["f"] != st["s"]:
                 w = self._due(st, now)
                 if w <= 0:
-                    c.move(pid, *st["f"])
-                    st["pending"], st["sent"] = False, now
+                    self._step(st, now)
+                    c.move(pid, *st["s"])
                 else:
                     waits.append(w)
         cam = self.cam
         if cam is not None:
-            if cam["pending"]:
-                w = self._due(cam, now)
-                if w <= 0:
-                    c.move(PID_CAM, *cam["f"])
-                    cam["pending"], cam["sent"] = False, now
-                    ax, ay = self._px(self.cfg.cam_pos)
-                    if math.hypot(cam["f"][0] - ax, cam["f"][1] - ay) > self.cfg.cam_radius * c.h:
-                        self.cam_release()     # se sale del radio: se levanta y el siguiente baja al centro
-                        cam = None
-                else:
-                    waits.append(w)
-            if cam is not None and not cam["pending"]:
-                idle = cam["last"] + CAM_IDLE_S - now
-                if idle <= 0:
-                    self.cam_release()
-                else:
-                    waits.append(idle)
+            waits.append(self._service_cam(cam, now))
+        waits = [w for w in waits if w is not None]
         return min(waits) if waits else None
+
+    def _service_cam(self, cam, now):
+        c = self.client
+        if cam["relift"] is not None:                 # recentrando: el dedo esta arriba
+            if now < cam["relift"]:
+                return cam["relift"] - now
+            c.down(PID_CAM, *cam["s"])
+            cam["relift"], cam["t0"], cam["sent"] = None, now - (SETTLE_S - RESETTLE_S), now
+            return RESETTLE_S
+        if cam["f"] != cam["s"]:
+            w = self._due(cam, now)
+            if w > 0:
+                return w
+            self._step(cam, now)
+            c.move(PID_CAM, *cam["s"])
+            ax, ay = self._px(self.cfg.cam_pos)
+            vx, vy = cam["s"][0] - ax, cam["s"][1] - ay
+            d, r = math.hypot(vx, vy), self.cfg.cam_radius * c.h
+            if d > r:
+                # se salio del radio: se levanta y baja del lado contrario al movimiento, asi tiene
+                # casi dos radios de recorrido antes de volver a recentrar
+                c.up(PID_CAM, *cam["s"])
+                rest = (cam["f"][0] - cam["s"][0], cam["f"][1] - cam["s"][1])
+                ox = min(max(ax - vx / d * r * RELIFT_BACK, 0), c.w - 1)
+                oy = min(max(ay - vy / d * r * RELIFT_BACK, 0), c.h - 1)
+                cam["s"] = [ox, oy]
+                cam["f"] = [ox + rest[0], oy + rest[1]]
+                cam["relift"] = now + RELIFT_S
+                return RELIFT_S
+            return SEND_S if cam["f"] != cam["s"] else CAM_IDLE_S
+        idle = cam["last"] + CAM_IDLE_S - now
+        if idle <= 0:
+            self.cam_release()
+            return None
+        return idle
+
+    def _step(self, st, now):
+        """Acerca el dedo a donde va el mouse sin brincar: un porcentaje del camino en cada envio, y
+        nunca mas rapido que CATCHUP veces la velocidad del mouse (lo que se junto mientras el dedo
+        esperaba sale parejo, no de golpe)."""
+        dt = max(now - st["sent"], 1e-3)
+        rate = st["in"] / dt if "in" in st else 0.0           # px/s del mouse desde el ultimo envio
+        st["rate"] = rate if "rate" not in st else 0.6 * st["rate"] + 0.4 * rate
+        st["in"] = 0.0
+        fx, fy = st["f"]
+        sx, sy = st["s"]
+        dx, dy = fx - sx, fy - sy
+        dist = math.hypot(dx, dy)
+        if dist <= 1.0:
+            st["s"] = [fx, fy]
+        else:
+            k = 1.0 - self.cfg.smooth
+            step = dist * k
+            cap = max(4.0, st["rate"] * SEND_S * CATCHUP)
+            step = min(step, cap) if self.cfg.smooth > 0 else min(dist, max(cap, dist * 0.5))
+            st["s"] = [sx + dx / dist * step, sy + dy / dist * step]
+        st["sent"] = now
 
     @staticmethod
     def _due(st, now):
@@ -469,7 +517,7 @@ class TouchLayer:
                 st = self.rad.get(pid)
                 b = next((x for x in self.cfg.buttons if x.pid == pid), None)
                 if st:
-                    c.up(pid, *st["f"])
+                    c.up(pid, *st["s"])
                 elif b:
                     c.up(pid, *self._px(b.pos))
         self.cam_release()

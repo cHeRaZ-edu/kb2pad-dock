@@ -39,7 +39,7 @@ SEND_S = 0.004              # como maximo un movimiento cada 4 ms por dedo
 CAM_IDLE_S = 0.12           # mouse quieto: se levanta el dedo de la camara
 RELIFT_S = 0.016            # al recentrar: pausa (~1 frame) entre levantar y volver a poner el dedo
 RELIFT_BACK = 0.8           # al recentrar, el dedo baja del lado contrario (fraccion del radio)
-VECTOR_T = 0.08             # modo vector: distancia del dedo = velocidad del mouse (px/s) x esto x sensibilidad
+EDGE_MARGIN = 0.03          # modo vector: el dedo se recentra al acercarse a esta distancia del borde (fraccion del alto)
 
 ACTION_DOWN, ACTION_UP, ACTION_MOVE = 0, 1, 2
 MSG_INJECT_TOUCH = 2
@@ -234,8 +234,8 @@ class TouchConfig:
         self.sens = float(t.get("sensitivity", 1.0))
         self.smooth = min(0.95, max(0.0, float(t.get("camera_smooth", 0.5))))
         # drag = el dedo sigue lo que se movio el mouse; en el borde del radio se levanta y recentra
-        # vector = el dedo se queda presionado en su punto y apunta hacia donde va el mouse; que tan
-        #          lejos depende de la velocidad (sin radio). Se levanta cuando el mouse se detiene
+        # vector = el dedo sigue al mouse sin radio y nunca regresa presionado: se levanta solo cuando
+        #          el mouse se detiene (o al llegar al borde de la pantalla)
         self.cam_mode = t.get("camera_mode") if t.get("camera_mode") in ("drag", "vector") else "drag"
         self.buttons = [TouchButton(b, i) for i, b in enumerate(t.get("buttons") or [])]
         sc = raw.get("scrcpy") or {}
@@ -415,12 +415,8 @@ class TouchLayer:
                 ax, ay = self._px(self.cfg.cam_pos)
                 self.client.down(PID_CAM, ax, ay)
                 self.cam = {"f": [ax, ay], "s": [ax, ay], "t0": now, "sent": now, "last": now, "relift": None}
-            if self.cfg.cam_mode == "vector":           # se junta el movimiento; el vector sale en service()
-                self.cam["vin"] = (self.cam.get("vin", (0.0, 0.0))[0] + dx * self.cfg.sens,
-                                   self.cam.get("vin", (0.0, 0.0))[1] + dy * self.cfg.sens)
-            else:
-                self.cam["f"][0] += dx * self.cfg.sens
-                self.cam["f"][1] += dy * self.cfg.sens
+            self.cam["f"][0] += dx * self.cfg.sens
+            self.cam["f"][1] += dy * self.cfg.sens
             self.cam["in"] = self.cam.get("in", 0.0) + math.hypot(dx, dy) * self.cfg.sens
             self.cam["last"] = now
             return True
@@ -459,8 +455,6 @@ class TouchLayer:
         return min(waits) if waits else None
 
     def _service_cam(self, cam, now):
-        if self.cfg.cam_mode == "vector":
-            return self._service_vector(cam, now)
         c = self.client
         if cam["relift"] is not None:                 # recentrando: el dedo esta arriba
             if now < cam["relift"]:
@@ -477,13 +471,19 @@ class TouchLayer:
             ax, ay = self._px(self.cfg.cam_pos)
             vx, vy = cam["s"][0] - ax, cam["s"][1] - ay
             d, r = math.hypot(vx, vy), self.cfg.cam_radius * c.h
-            if d > r and self.cfg.cam_mode == "drag":
-                # se salio del radio: se levanta y baja del lado contrario al movimiento, asi tiene
-                # casi dos radios de recorrido antes de volver a recentrar
+            if self.cfg.cam_mode == "vector":
+                m = EDGE_MARGIN * c.h                 # sin radio: solo el borde de la pantalla lo recentra
+                sx, sy = cam["s"]
+                out = sx < m or sy < m or sx > c.w - 1 - m or sy > c.h - 1 - m
+                back = 0.0                            # y vuelve a bajar en su punto
+            else:
+                out = d > r
+                back = r * RELIFT_BACK                # baja del lado contrario: casi dos radios de recorrido
+            if out and d > 0:
                 c.up(PID_CAM, *cam["s"])
                 rest = (cam["f"][0] - cam["s"][0], cam["f"][1] - cam["s"][1])
-                ox = min(max(ax - vx / d * r * RELIFT_BACK, 0), c.w - 1)
-                oy = min(max(ay - vy / d * r * RELIFT_BACK, 0), c.h - 1)
+                ox = min(max(ax - vx / d * back, 0), c.w - 1)
+                oy = min(max(ay - vy / d * back, 0), c.h - 1)
                 cam["s"] = [ox, oy]
                 cam["f"] = [ox + rest[0], oy + rest[1]]
                 cam["relift"] = now + RELIFT_S
@@ -494,28 +494,6 @@ class TouchLayer:
             self.cam_release()
             return None
         return idle
-
-    def _service_vector(self, cam, now):
-        """Vector: dedo = punto + velocidad del mouse (direccion y rapidez). Sin radio: solo lo limita
-        la pantalla. Al frenar el mouse el dedo regresa hacia su punto y luego se levanta."""
-        c = self.client
-        w = self._due(cam, now)
-        if w > 0:
-            return w
-        dt = max(now - cam.get("vt", cam["t0"]), 1e-3)
-        ix, iy = cam.pop("vin", (0.0, 0.0))
-        vx, vy = cam.get("v", (0.0, 0.0))
-        vx, vy = 0.5 * vx + 0.5 * ix / dt, 0.5 * vy + 0.5 * iy / dt     # px/s, suavizado
-        cam["v"], cam["vt"] = (vx, vy), now
-        ax, ay = self._px(self.cfg.cam_pos)
-        cam["f"] = [min(max(ax + vx * VECTOR_T, 0), c.w - 1), min(max(ay + vy * VECTOR_T, 0), c.h - 1)]
-        if cam["f"] != cam["s"]:
-            self._step(cam, now)
-            c.move(PID_CAM, *cam["s"])
-        if now - cam["last"] > CAM_IDLE_S:
-            self.cam_release()
-            return None
-        return SEND_S
 
     def _step(self, st, now):
         """Acerca el dedo a donde va el mouse sin brincar: un porcentaje del camino en cada envio, y

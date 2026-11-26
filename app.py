@@ -2607,12 +2607,11 @@ class TouchTab(QWidget):
                                             "(sin botones encima)."))
         self.cam_mode = QComboBox()
         self.cam_mode.addItem("Deslizar: el dedo sigue al mouse y recentra en el borde", "drag")
-        self.cam_mode.addItem("Vector: el dedo apunta hacia donde va el mouse (sin radio)", "vector")
+        self.cam_mode.addItem("Vector: no se suelta mientras mueves el mouse (sin radio)", "vector")
         form.addRow("Modo:", self.cam_mode)
-        form.addRow("", BindingDialog._hint("Vector: el dedo se queda presionado en su punto y se aleja en la "
-                                            "direccion del mouse, mas lejos entre mas rapido lo mueves; al parar "
-                                            "regresa y se levanta. El radio no se usa. Deslizar: el dedo recorre "
-                                            "lo mismo que el mouse."))
+        form.addRow("", BindingDialog._hint("Vector: el dedo sigue al mouse sin radio y nunca regresa presionado; "
+                                            "se levanta solo cuando paras el mouse (o en el borde de la pantalla). "
+                                            "Deslizar: igual, pero se recentra al llegar al radio."))
         self.cam_radius = _dspin(0.02, 0.6, 0.01, 2)
         form.addRow("Recorrido (Deslizar):", self.cam_radius)
         form.addRow("", BindingDialog._hint("Fraccion del alto de la pantalla. Mas grande = se recentra menos "

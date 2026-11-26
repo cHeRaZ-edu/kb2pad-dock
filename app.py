@@ -2558,6 +2558,17 @@ class TouchButtonDialog(QDialog):
         self.radial.toggled.connect(self.radial_r.setEnabled)
         self.radial_r.setEnabled(self.radial.isChecked())
 
+        self.press = QComboBox()
+        for key, text in C.TOUCH_PRESS.items():
+            self.press.addItem(text, key)
+        self.press.setCurrentIndex(max(0, self.press.findData(b.get("press", "hold"))))
+        form.addRow("Al presionar:", self.press)
+        form.addRow("", BindingDialog._hint("Tap al presionar = un toque corto aunque sostengas la tecla (ej. "
+                                            "guardar el arma sin que se quede presionado). El radial siempre es "
+                                            "Mantener."))
+        self.radial.toggled.connect(lambda on: self.press.setEnabled(not on))
+        self.press.setEnabled(not self.radial.isChecked())
+
         self.modes = QListWidget()
         self.modes.setMaximumHeight(90)
         for n in mode_names:
@@ -2630,7 +2641,8 @@ class TouchButtonDialog(QDialog):
         modes = [self.modes.item(i).text() for i in range(self.modes.count())
                  if self.modes.item(i).checkState() == Qt.CheckState.Checked]
         return C.touch_button(self.name.text().strip(), self.pos, chords, self.radial.isChecked(),
-                              round(self.radial_r.value(), 3), modes, self.share.isChecked())
+                              round(self.radial_r.value(), 3), modes, self.share.isChecked(),
+                              self.press.currentData())
 
 
 class TouchTab(QWidget):
@@ -2757,7 +2769,9 @@ class TouchTab(QWidget):
     def refresh(self, select=None):
         self.table.setRowCount(len(self.buttons))
         for r, b in enumerate(self.buttons):
-            kind = f"Radial (alcance {b.get('radial_r', 0.12):.2f})" if b.get("radial") else "Toque"
+            press = {"hold": "Toque", "tap": "Tap al presionar", "tap_up": "Tap al soltar",
+                     "toggle": "Alternar"}.get(b.get("press", "hold"), "Toque")
+            kind = f"Radial (alcance {b.get('radial_r', 0.12):.2f})" if b.get("radial") else press
             if b.get("share"):
                 kind += " + control"
             cells = [b.get("name") or f"Toque {r + 1}", C.touch_inputs_label(b.get("inputs") or []),

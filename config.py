@@ -575,11 +575,21 @@ def normalize(data):
     return out
 
 
-def touch_button(name="", pos=(0.5, 0.5), inputs=(), radial=False, radial_r=0.12, modes=(), share=False):
+TOUCH_PRESS = {                     # como responde un boton tactil a su tecla
+    "hold": "Mantener (dedo abajo mientras sostienes)",
+    "tap": "Tap al presionar (KeyDown)",
+    "tap_up": "Tap al soltar (KeyUp)",
+    "toggle": "Alternar (switch: un toque baja, otro sube)",
+}
+
+
+def touch_button(name="", pos=(0.5, 0.5), inputs=(), radial=False, radial_r=0.12, modes=(), share=False,
+                 press="hold"):
     # share = la tecla toca la pantalla y ademas manda su boton del control (si no, gana el toque)
     return {"name": name, "pos": [round(float(pos[0]), 4), round(float(pos[1]), 4)],
             "inputs": [list(c) for c in inputs], "radial": bool(radial),
-            "radial_r": float(radial_r), "modes": list(modes), "share": bool(share)}
+            "radial_r": float(radial_r), "modes": list(modes), "share": bool(share),
+            "press": "hold" if radial or press not in TOUCH_PRESS else press}
 
 
 def touch_clashes(modes, b):
@@ -627,7 +637,8 @@ def _norm_touch(t):
         chords = [[str(n) for n in c] for c in b.get("inputs") or [] if isinstance(c, (list, tuple)) and c]
         buttons.append(touch_button(str(b.get("name") or ""), _pos(b.get("pos"), [0.5, 0.5]), chords,
                                     bool(b.get("radial")), _num(b.get("radial_r"), 0.12, 0.02, 0.6),
-                                    [str(m) for m in b.get("modes") or []], bool(b.get("share"))))
+                                    [str(m) for m in b.get("modes") or []], bool(b.get("share")),
+                                    str(b.get("press") or "hold")))
     t["buttons"] = buttons
 
 

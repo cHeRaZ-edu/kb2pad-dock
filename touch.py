@@ -37,6 +37,10 @@ RESETTLE_S = 0.025          # igual, pero al recentrar la camara (mas corto para
 CATCHUP = 1.5               # el dedo alcanza al mouse a lo mucho 1.5x la velocidad del mouse (sin brincos)
 SEND_S = 0.004              # como maximo un movimiento cada 4 ms por dedo
 CAM_IDLE_S = 0.12           # mouse quieto: se levanta el dedo de la camara
+TAP_S = 0.07                # duracion de un tap (unos 4 frames a 60 fps)
+
+# Como responde un boton tactil a su tecla (como GetKey / GetKeyDown / GetKeyUp en Unity)
+PRESS_MODES = ("hold", "tap", "tap_up", "toggle")
 RELIFT_S = 0.016            # al recentrar: pausa (~1 frame) entre levantar y volver a poner el dedo
 RELIFT_BACK = 0.8           # al recentrar, el dedo baja del lado contrario (fraccion del radio)
 EDGE_MARGIN = 0.03          # modo vector: el dedo se recentra al acercarse a esta distancia del borde (fraccion del alto)
@@ -218,6 +222,10 @@ class TouchButton:
                          for chord in raw.get("inputs") or [] if chord]
         self.radial = bool(raw.get("radial"))
         self.share = bool(raw.get("share"))           # tambien manda la tecla al control
+        # hold = el dedo abajo mientras sostienes; tap = un tap al presionar; tap_up = un tap al soltar;
+        # toggle = un toque lo deja abajo y el siguiente lo levanta. El radial siempre es hold.
+        press = raw.get("press", "hold")
+        self.press = "hold" if self.radial or press not in PRESS_MODES else press
         self.radial_r = float(raw.get("radial_r", 0.12))
         self.modes = set(raw.get("modes") or [])      # vacio = todos los modos
 
@@ -259,7 +267,10 @@ class TouchLayer:
         self.consumed = set()        # entradas usadas por una combinacion, hasta soltarlas
         self.consumed_excl = set()   # las de combinaciones que NO comparten: el control no las recibe
         self.combo_on = set()
-        self.active = set()          # pids de botones tocando
+        self.active = set()          # pids de botones con el dedo abajo
+        self.trig_on = set()         # pids cuya tecla/combinacion esta presionada (para detectar flancos)
+        self.latched = set()         # toggle: pids que se quedaron abajo
+        self.taps = {}               # pid -> momento en que se levanta el tap
         self.suppressed = frozenset()
         self.rad = {}                # pid -> {"f" destino, "s" enviado, "t0", "sent", "in", "rate"}
         self.rad_order = []
@@ -368,6 +379,27 @@ class TouchLayer:
             self.consumed |= t
         self.suppressed = frozenset(used | self.consumed_excl)
 
+        # tipo de presionado: de "tecla presionada" a "dedo abajo"
+        on, now = active, time.monotonic()
+        desired = set()
+        for b in self.cfg.buttons:
+            pid = b.pid
+            rising, falling = pid in on and pid not in self.trig_on, pid not in on and pid in self.trig_on
+            if b.press == "hold":
+                if pid in on:
+                    desired.add(pid)
+                continue
+            if b.press == "toggle" and rising:
+                self.latched ^= {pid}
+            elif (b.press == "tap" and rising) or (b.press == "tap_up" and falling):
+                self.taps[pid] = now + TAP_S
+            if pid in self.latched and b.in_mode(self.mode):
+                desired.add(pid)
+            if pid in self.taps:
+                desired.add(pid)
+        self.trig_on = on
+        active = desired
+
         c = self.client
         by_pid = {b.pid: b for b in self.cfg.buttons}
         for pid in active - self.active:
@@ -442,10 +474,18 @@ class TouchLayer:
                 self.client.close()
                 self.client = None
                 self.active, self.rad, self.rad_order, self.cam = set(), {}, [], None
+                self.trig_on, self.latched, self.taps = set(), set(), {}
                 self.suppressed = frozenset()
             return None
         c = self.client
         waits = []
+        if self.taps:                                  # taps que ya cumplieron su tiempo: se levantan
+            done = [pid for pid, until in self.taps.items() if until <= now]
+            for pid in done:
+                del self.taps[pid]
+            if done:
+                self._update()
+            waits += [until - now for until in self.taps.values()]
         for pid, st in self.rad.items():
             if st["f"] != st["s"]:
                 w = self._due(st, now)
@@ -543,6 +583,9 @@ class TouchLayer:
         self.consumed_excl.clear()
         self.combo_on.clear()
         self.active = set()
+        self.trig_on = set()
+        self.latched.clear()
+        self.taps.clear()
         self.rad.clear()
         self.rad_order.clear()
         self.suppressed = frozenset()

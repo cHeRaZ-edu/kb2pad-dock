@@ -217,6 +217,7 @@ class TouchButton:
         self.triggers = [frozenset(C.input_code(n) for n in chord)
                          for chord in raw.get("inputs") or [] if chord]
         self.radial = bool(raw.get("radial"))
+        self.share = bool(raw.get("share"))           # tambien manda la tecla al control
         self.radial_r = float(raw.get("radial_r", 0.12))
         self.modes = set(raw.get("modes") or [])      # vacio = todos los modos
 
@@ -256,6 +257,7 @@ class TouchLayer:
         self.want = False            # la GUI pidio conectar (el juego esta abierto)
         self.held = set()            # entradas presionadas (codigos)
         self.consumed = set()        # entradas usadas por una combinacion, hasta soltarlas
+        self.consumed_excl = set()   # las de combinaciones que NO comparten: el control no las recibe
         self.combo_on = set()
         self.active = set()          # pids de botones tocando
         self.suppressed = frozenset()
@@ -334,6 +336,7 @@ class TouchLayer:
         else:
             self.held.discard(code)
             self.consumed.discard(code)
+            self.consumed_excl.discard(code)
         self._update()
 
     def _update(self):
@@ -354,13 +357,16 @@ class TouchLayer:
         for b, t in sat:
             if not any(t < other for _, other in sat):      # la combinacion mas grande gana
                 active.add(b.pid)
-                used |= t
+                if not b.share:                              # compartido: el control tambien la recibe
+                    used |= t
                 if len(t) > 1:
                     combos.add(t)
+                    if not b.share:
+                        self.consumed_excl |= t
         self.combo_on = combos
         for t in combos:
             self.consumed |= t
-        self.suppressed = frozenset(used | self.consumed)
+        self.suppressed = frozenset(used | self.consumed_excl)
 
         c = self.client
         by_pid = {b.pid: b for b in self.cfg.buttons}
@@ -534,6 +540,7 @@ class TouchLayer:
         self.cam_release()
         self.held.clear()
         self.consumed.clear()
+        self.consumed_excl.clear()
         self.combo_on.clear()
         self.active = set()
         self.rad.clear()

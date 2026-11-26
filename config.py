@@ -575,10 +575,26 @@ def normalize(data):
     return out
 
 
-def touch_button(name="", pos=(0.5, 0.5), inputs=(), radial=False, radial_r=0.12, modes=()):
+def touch_button(name="", pos=(0.5, 0.5), inputs=(), radial=False, radial_r=0.12, modes=(), share=False):
+    # share = la tecla toca la pantalla y ademas manda su boton del control (si no, gana el toque)
     return {"name": name, "pos": [round(float(pos[0]), 4), round(float(pos[1]), 4)],
             "inputs": [list(c) for c in inputs], "radial": bool(radial),
-            "radial_r": float(radial_r), "modes": list(modes)}
+            "radial_r": float(radial_r), "modes": list(modes), "share": bool(share)}
+
+
+def touch_clashes(modes, b):
+    """Teclas del boton tactil que tambien son botones del control: {tecla: [modos]}."""
+    names = {n for chord in b.get("inputs") or [] for n in chord}
+    out = {}
+    for m in modes or []:
+        if b.get("modes") and m.get("name") not in b["modes"]:
+            continue
+        for bd in m.get("bindings") or []:
+            n = bd.get("input")
+            if n in names and not bd.get("camera_only") and bd.get("enabled", True):
+                if m.get("name") not in out.setdefault(n, []):
+                    out[n].append(m.get("name"))
+    return out
 
 
 def _num(v, default, lo, hi):
@@ -611,7 +627,7 @@ def _norm_touch(t):
         chords = [[str(n) for n in c] for c in b.get("inputs") or [] if isinstance(c, (list, tuple)) and c]
         buttons.append(touch_button(str(b.get("name") or ""), _pos(b.get("pos"), [0.5, 0.5]), chords,
                                     bool(b.get("radial")), _num(b.get("radial_r"), 0.12, 0.02, 0.6),
-                                    [str(m) for m in b.get("modes") or []]))
+                                    [str(m) for m in b.get("modes") or []], bool(b.get("share"))))
     t["buttons"] = buttons
 
 
@@ -766,16 +782,8 @@ def validate(cfg):
         for m in b.get("modes") or []:
             if m not in modes:
                 warnings.append(f"{where}: el modo '{m}' ya no existe")
-        if t.get("enabled"):
-            singles = {c[0] for c in b.get("inputs") or [] if len(c) == 1}
-            clash = {}
-            for m in cfg.get("modes") or []:
-                if b.get("modes") and m.get("name") not in b["modes"]:
-                    continue
-                for bd in m.get("bindings") or []:
-                    if bd.get("input") in singles and not bd.get("camera_only") and bd.get("enabled", True):
-                        clash.setdefault(bd["input"], []).append(m.get("name"))
-            for n, ms in clash.items():
+        if t.get("enabled") and not b.get("share"):
+            for n, ms in touch_clashes(cfg.get("modes"), b).items():
                 warnings.append(f"{where}: '{input_label(n)}' tambien es boton del control ({', '.join(ms)}); "
                                 "con los toques conectados gana el toque")
 

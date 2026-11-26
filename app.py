@@ -2499,11 +2499,13 @@ def _pos_text(pos):
 
 
 class TouchButtonDialog(QDialog):
-    def __init__(self, b, sc, mode_names, others=(), parent=None):
+    def __init__(self, b, sc, modes, others=(), parent=None):
         super().__init__(parent)
         self.setWindowTitle("Boton tactil")
         self.setMinimumWidth(560)
         self.sc = sc
+        self.all_modes = modes
+        mode_names = [m["name"] for m in modes]
         self.others = list(others)
         self.pos = list(b.get("pos") or [0.5, 0.5])
         form = QFormLayout(self)
@@ -2566,6 +2568,13 @@ class TouchButtonDialog(QDialog):
         form.addRow("Solo en modos:", self.modes)
         form.addRow("", BindingDialog._hint("Ninguno marcado = en todos los modos."))
 
+        self.share = QCheckBox("Tambien mandar la tecla al control (compartir la accion)")
+        self.share.setChecked(bool(b.get("share")))
+        form.addRow("Compartir:", self.share)
+        form.addRow("", BindingDialog._hint("Si la tecla tambien es boton del control: marcado = toca la pantalla "
+                                            "y ademas manda su boton (ej. Shift: guardar el arma y correr). "
+                                            "Desmarcado = solo el toque."))
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
@@ -2597,6 +2606,23 @@ class TouchButtonDialog(QDialog):
         if not self.inputs.count():
             QMessageBox.warning(self, "Boton tactil", "Agrega al menos una tecla o combinacion.")
             return
+        clash = C.touch_clashes(self.all_modes, self.button())
+        if clash and not self.share.isChecked():
+            modes = []
+            for ms in clash.values():
+                modes += [m for m in ms if m not in modes]
+            keys = ", ".join(f"'{C.input_label(n)}'" for n in clash)
+            ans = QMessageBox.question(
+                self, "Compartir acciones",
+                f"{keys} tambien es boton del control en {', '.join(modes)}.\n\n"
+                f"¿Estas seguro de compartir las acciones de {', '.join(modes)}?\n\n"
+                "Si: la tecla toca la pantalla y ademas manda su boton del control.\n"
+                "No: solo el toque (el control deja de recibir esa tecla mientras los toques estan conectados).",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.No)
+            if ans == QMessageBox.StandardButton.Cancel:
+                return
+            self.share.setChecked(ans == QMessageBox.StandardButton.Yes)
         self.accept()
 
     def button(self):
@@ -2604,7 +2630,7 @@ class TouchButtonDialog(QDialog):
         modes = [self.modes.item(i).text() for i in range(self.modes.count())
                  if self.modes.item(i).checkState() == Qt.CheckState.Checked]
         return C.touch_button(self.name.text().strip(), self.pos, chords, self.radial.isChecked(),
-                              round(self.radial_r.value(), 3), modes)
+                              round(self.radial_r.value(), 3), modes, self.share.isChecked())
 
 
 class TouchTab(QWidget):
@@ -2732,6 +2758,8 @@ class TouchTab(QWidget):
         self.table.setRowCount(len(self.buttons))
         for r, b in enumerate(self.buttons):
             kind = f"Radial (alcance {b.get('radial_r', 0.12):.2f})" if b.get("radial") else "Toque"
+            if b.get("share"):
+                kind += " + control"
             cells = [b.get("name") or f"Toque {r + 1}", C.touch_inputs_label(b.get("inputs") or []),
                      _pos_text(b["pos"]), kind, ", ".join(b.get("modes") or []) or "Todos"]
             for c, text in enumerate(cells):
@@ -2854,7 +2882,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.t_bind, "Botones")
         self.tabs.addTab(scrolled(self.t_sticks), "Sticks y teclas especiales")
         self.tabs.addTab(scrolled(self.t_mouse), "Mouse y radial")
-        self.t_touch = TouchTab(lambda: self.t_scrcpy.values(), lambda: [m["name"] for m in self.t_bind.modes])
+        self.t_touch = TouchTab(lambda: self.t_scrcpy.values(), lambda: self.t_bind.modes)
         self.tabs.addTab(scrolled(self.t_touch), "Toques en pantalla")
         self.tabs.addTab(scrolled(self.t_scrcpy), "Juego (scrcpy)")
         self.t_thermal = ThermalTab()

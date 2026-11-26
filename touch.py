@@ -30,6 +30,7 @@ NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 DEVICE_JAR = "/data/local/tmp/kb2pad-touch.jar"
 
 PID_CAM = 10
+PID_ZOOM_A, PID_ZOOM_B = 11, 12   # pellizco: un dedo quieto y otro que se desliza
 PID_BTN0 = 20               # botones: 20, 21, 22...
 
 SETTLE_S = 0.04             # el dedo baja y espera ~2 frames antes de moverse (si no, el juego no ve el arrastre)
@@ -38,6 +39,9 @@ CATCHUP = 1.5               # el dedo alcanza al mouse a lo mucho 1.5x la veloci
 SEND_S = 0.004              # como maximo un movimiento cada 4 ms por dedo
 CAM_IDLE_S = 0.12           # mouse quieto: se levanta el dedo de la camara
 TAP_S = 0.07                # duracion de un tap (unos 4 frames a 60 fps)
+CARRY_MAX_S = 0.30          # giro que se guarda con otro dedo abajo: solo el de los primeros 0.3 s
+ZOOM_IDLE_S = 0.20          # sin mover la rueda este tiempo: se levantan los dos dedos del zoom
+ZOOM_MIN_GAP = 0.04         # distancia minima entre los dos dedos del zoom (fraccion del alto)
 
 # Como responde un boton tactil a su tecla (como GetKey / GetKeyDown / GetKeyUp en Unity)
 PRESS_MODES = ("hold", "tap", "tap_up", "toggle")
@@ -247,6 +251,13 @@ class TouchConfig:
         #          el mouse se detiene (o al llegar al borde de la pantalla)
         self.cam_mode = t.get("camera_mode") if t.get("camera_mode") in ("drag", "vector") else "drag"
         self.buttons = [TouchButton(b, i) for i, b in enumerate(t.get("buttons") or [])]
+        # zoom con la rueda: pellizco (un dedo quieto en zoom_pos, el otro a zoom_gap a la derecha
+        # se aleja o se acerca zoom_step por cada clic de la rueda)
+        self.zoom = bool(t.get("zoom"))
+        self.zoom_pos = tuple(float(v) for v in (t.get("zoom_pos") or (0.55, 0.45)))
+        self.zoom_gap = float(t.get("zoom_gap", 0.12))
+        self.zoom_step = float(t.get("zoom_step", 0.03))
+        self.zoom_invert = bool(t.get("zoom_invert"))
         sc = raw.get("scrcpy") or {}
         self.adb = C.tool_path(sc, "adb")
         self.scrcpy = C.tool_path(sc, "scrcpy")
@@ -275,6 +286,12 @@ class TouchLayer:
         self.rad = {}                # pid -> {"f" destino, "s" enviado, "t0", "sent", "in", "rate"}
         self.rad_order = []
         self.cam = None              # igual que rad + "last" y "relift" (dedo arriba hasta ese momento)
+        # Un dedo quieto (boton) + el de la camara moviendose = el juego lo toma como pellizco (zoom).
+        # Por eso, con un boton o el zoom abajo, la camara se levanta y su movimiento se guarda aqui:
+        self.cam_carry = [0.0, 0.0]
+        self.cam_want = False
+        self.cam_pause_t = 0.0
+        self.zoom = None             # {"a": [x, y] quieto, "b": dedo que se desliza, "last"}
         self.debug = False
         self._gen = 0
 
@@ -402,6 +419,8 @@ class TouchLayer:
 
         c = self.client
         by_pid = {b.pid: b for b in self.cfg.buttons}
+        if active - self.active:
+            self._cam_pause()                 # nunca un dedo quieto mientras la camara se mueve
         for pid in active - self.active:
             b = by_pid[pid]
             if self.debug:
@@ -449,6 +468,16 @@ class TouchLayer:
             return True
         if mouselook and self.cfg.camera:
             now = time.monotonic()
+            if self.active or self.zoom is not None:
+                # hay otro dedo abajo: se guarda el giro y se aplica al soltarlo (solo el de un tap; con
+                # un boton sostenido mucho tiempo la camara simplemente espera)
+                if not self.cam_want:
+                    self.cam_pause_t = now
+                if now - self.cam_pause_t <= CARRY_MAX_S:
+                    self.cam_carry[0] += dx * self.cfg.sens
+                    self.cam_carry[1] += dy * self.cfg.sens
+                    self.cam_want = True
+                return True
             if self.cam is None:
                 ax, ay = self._px(self.cfg.cam_pos)
                 self.client.down(PID_CAM, ax, ay)
@@ -465,6 +494,59 @@ class TouchLayer:
             self.client.up(PID_CAM, *self.cam["s"])
         self.cam = None
 
+    def cam_stop(self):
+        """Mouse-camara apagado o radial del control: se levanta todo lo de la camara y el zoom."""
+        self.cam_release()
+        self.cam_carry, self.cam_want = [0.0, 0.0], False
+        self.zoom_release()
+
+    def _cam_pause(self):
+        """Levanta la camara guardando lo que faltaba por enviar (se retoma al soltar los otros dedos)."""
+        if self.cam is not None:
+            self.cam_carry[0] += self.cam["f"][0] - self.cam["s"][0]
+            self.cam_carry[1] += self.cam["f"][1] - self.cam["s"][1]
+            if not self.cam_want:
+                self.cam_pause_t = time.monotonic()
+            self.cam_want = self.cam_want or self.cam["f"] != self.cam["s"]
+            self.cam_release()
+
+    def _cam_resume(self, now):
+        ax, ay = self._px(self.cfg.cam_pos)
+        cx, cy = self.cam_carry
+        self.client.down(PID_CAM, ax, ay)
+        self.cam = {"f": [ax + cx, ay + cy], "s": [ax, ay], "t0": now, "sent": now, "last": now,
+                    "relift": None, "in": math.hypot(cx, cy)}
+        self.cam_carry, self.cam_want = [0.0, 0.0], False
+
+    # ---------- zoom con la rueda
+    def wheel(self, name, n, mouselook):
+        """Clic de la rueda. True si lo uso para el zoom (pellizco)."""
+        if not (self.ready and self.cfg.zoom and mouselook and name in ("WHEEL_UP", "WHEEL_DOWN")):
+            return False
+        c, now = self.client, time.monotonic()
+        if self.zoom is None:
+            self._cam_pause()
+            ax, ay = self._px(self.cfg.zoom_pos)
+            bx = min(ax + self.cfg.zoom_gap * c.h, c.w - 1)
+            c.down(PID_ZOOM_A, ax, ay)
+            c.down(PID_ZOOM_B, bx, ay)
+            self.zoom = {"a": [ax, ay], "b": {"f": [bx, ay], "s": [bx, ay], "t0": now, "sent": now}, "last": now}
+        z = self.zoom
+        sign = 1 if (name == "WHEEL_UP") != self.cfg.zoom_invert else -1     # arriba = separar = acercar
+        step = sign * n * self.cfg.zoom_step * c.h
+        lo, hi = z["a"][0] + ZOOM_MIN_GAP * c.h, c.w - 1
+        z["b"]["f"][0] = min(max(z["b"]["f"][0] + step, lo), hi)
+        z["b"]["in"] = z["b"].get("in", 0.0) + abs(step)
+        z["last"] = now
+        return True
+
+    def zoom_release(self):
+        z, c = self.zoom, self.client
+        if z is not None and c is not None:
+            c.up(PID_ZOOM_B, *z["b"]["s"])
+            c.up(PID_ZOOM_A, *z["a"])
+        self.zoom = None
+
     # ---------- tiempo
     def service(self, now):
         """Manda los movimientos pendientes. Regresa cuanto esperar (None = nada pendiente)."""
@@ -473,7 +555,7 @@ class TouchLayer:
                 _log("Toques: se perdio la conexion")
                 self.client.close()
                 self.client = None
-                self.active, self.rad, self.rad_order, self.cam = set(), {}, [], None
+                self.active, self.rad, self.rad_order, self.cam, self.zoom = set(), {}, [], None, None
                 self.trig_on, self.latched, self.taps = set(), set(), {}
                 self.suppressed = frozenset()
             return None
@@ -494,6 +576,23 @@ class TouchLayer:
                     c.move(pid, *st["s"])
                 else:
                     waits.append(w)
+        z = self.zoom
+        if z is not None:
+            b = z["b"]
+            if b["f"] != b["s"]:
+                w = self._due(b, now)
+                if w <= 0:
+                    self._step(b, now)
+                    c.move(PID_ZOOM_B, *b["s"])
+                    waits.append(SEND_S)
+                else:
+                    waits.append(w)
+            elif now - z["last"] >= ZOOM_IDLE_S:
+                self.zoom_release()
+            else:
+                waits.append(z["last"] + ZOOM_IDLE_S - now)
+        if self.cam_want and self.cam is None and not self.active and self.zoom is None:
+            self._cam_resume(now)             # ya no hay otros dedos: la camara retoma lo que se guardo
         cam = self.cam
         if cam is not None:
             waits.append(self._service_cam(cam, now))
@@ -578,6 +677,8 @@ class TouchLayer:
                 elif b:
                     c.up(pid, *self._px(b.pos))
         self.cam_release()
+        self.zoom_release()
+        self.cam_carry, self.cam_want = [0.0, 0.0], False
         self.held.clear()
         self.consumed.clear()
         self.consumed_excl.clear()

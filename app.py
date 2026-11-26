@@ -2655,6 +2655,7 @@ class TouchTab(QWidget):
         self.modes_provider = modes_provider
         self.buttons = []
         self.cam_pos = [0.72, 0.45]
+        self.zoom_pos = [0.55, 0.45]
         lay = QVBoxLayout(self)
 
         box = QGroupBox("Toques en pantalla")
@@ -2702,6 +2703,31 @@ class TouchTab(QWidget):
         form.addRow("", BindingDialog._hint("Pixeles del celular por cada cuenta del mouse (camara y radial tactil)."))
         lay.addWidget(box)
 
+        box = QGroupBox("Zoom con la rueda (pellizco)")
+        form = QFormLayout(box)
+        self.zoom = QCheckBox("Con mouse-camara activado, la rueda hace zoom con dos dedos")
+        form.addRow(self.zoom)
+        form.addRow("", BindingDialog._hint("Un dedo se queda quieto y el otro se aleja (rueda arriba) o se acerca "
+                                            "(rueda abajo). Mientras tanto la rueda no manda sus botones del control "
+                                            "(desactiva o deja sus asignaciones, como prefieras)."))
+        row = QHBoxLayout()
+        self.lbl_zoom = QLabel()
+        btn = QPushButton("Elegir en la pantalla...")
+        btn.clicked.connect(self.pick_zoom)
+        row.addWidget(self.lbl_zoom)
+        row.addWidget(btn)
+        row.addStretch()
+        form.addRow("Dedo quieto:", row)
+        self.zoom_gap = _dspin(0.04, 0.6, 0.01, 2)
+        form.addRow("Separacion inicial:", self.zoom_gap)
+        self.zoom_step = _dspin(0.005, 0.3, 0.005, 3)
+        form.addRow("Zoom por clic:", self.zoom_step)
+        form.addRow("", BindingDialog._hint("Fracciones del alto de la pantalla. El segundo dedo empieza a la "
+                                            "derecha del primero."))
+        self.zoom_invert = QCheckBox("Invertir (rueda arriba = alejar)")
+        form.addRow(self.zoom_invert)
+        lay.addWidget(box)
+
         box = QGroupBox("Botones tactiles")
         v = QVBoxLayout(box)
         self.table = QTableWidget(0, 5)
@@ -2731,8 +2757,10 @@ class TouchTab(QWidget):
         self.enabled.toggled.connect(self._sync)
         for w in (self.enabled, self.camera):
             w.toggled.connect(self.changed.emit)
-        for w in (self.cam_radius, self.cam_smooth, self.sens):
+        for w in (self.cam_radius, self.cam_smooth, self.sens, self.zoom_gap, self.zoom_step):
             w.valueChanged.connect(self.changed.emit)
+        for w in (self.zoom, self.zoom_invert):
+            w.toggled.connect(self.changed.emit)
         self.cam_mode.currentIndexChanged.connect(self.changed.emit)
 
     def _sync(self, *_):
@@ -2750,6 +2778,12 @@ class TouchTab(QWidget):
         self.cam_smooth.setValue(float(t["camera_smooth"]))
         self.cam_mode.setCurrentIndex(max(0, self.cam_mode.findData(t.get("camera_mode", "drag"))))
         self.sens.setValue(float(t["sensitivity"]))
+        self.zoom.setChecked(bool(t["zoom"]))
+        self.zoom_pos = list(t["zoom_pos"])
+        self.lbl_zoom.setText(_pos_text(self.zoom_pos))
+        self.zoom_gap.setValue(float(t["zoom_gap"]))
+        self.zoom_step.setValue(float(t["zoom_step"]))
+        self.zoom_invert.setChecked(bool(t["zoom_invert"]))
         self.buttons = copy.deepcopy(t["buttons"])
         self.refresh()
         self._sync()
@@ -2763,6 +2797,11 @@ class TouchTab(QWidget):
             "camera_smooth": round(self.cam_smooth.value(), 3),
             "camera_mode": self.cam_mode.currentData(),
             "sensitivity": round(self.sens.value(), 3),
+            "zoom": self.zoom.isChecked(),
+            "zoom_pos": list(self.zoom_pos),
+            "zoom_gap": round(self.zoom_gap.value(), 3),
+            "zoom_step": round(self.zoom_step.value(), 3),
+            "zoom_invert": self.zoom_invert.isChecked(),
             "buttons": self.buttons,
         }
 
@@ -2826,6 +2865,15 @@ class TouchTab(QWidget):
         del self.buttons[r]
         self.refresh(min(r, len(self.buttons) - 1))
         self.changed.emit()
+
+    def pick_zoom(self):
+        others = [(b.get("name") or f"Toque {i + 1}", b["pos"]) for i, b in enumerate(self.buttons)]
+        dlg = ScreenPickDialog(self.sc_provider(), self.zoom_pos, "Dedo quieto del zoom",
+                               radius=self.zoom_gap.value(), others=others, parent=self)
+        if dlg.exec():
+            self.zoom_pos = dlg.value()
+            self.lbl_zoom.setText(_pos_text(self.zoom_pos))
+            self.changed.emit()
 
     def pick_camera(self):
         others = [(b.get("name") or f"Toque {i + 1}", b["pos"]) for i, b in enumerate(self.buttons)]

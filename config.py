@@ -282,6 +282,11 @@ DEFAULT_CONFIG = {
         "camera_smooth": 0.5,               # 0 = el dedo brinca directo; mas alto = mas suave (y un poco mas lento)
         "camera_mode": "drag",              # drag = sigue al mouse y recentra en el radio; vector = sin radio, se suelta al parar
         "sensitivity": 1.0,                 # pixeles del celular por cuenta del mouse
+        "zoom": False,                      # rueda (con mouse-camara) = zoom con un pellizco de dos dedos
+        "zoom_pos": [0.55, 0.45],           # el dedo que se queda quieto
+        "zoom_gap": 0.12,                   # distancia inicial al segundo dedo (a la derecha)
+        "zoom_step": 0.03,                  # cuanto se aleja / acerca el segundo dedo por clic
+        "zoom_invert": False,
         # {"name", "pos": [x, y], "inputs": [["KEY_E"], ["BTN_LEFT", "BTN_RIGHT"]],
         #  "radial": False, "radial_r": 0.12, "modes": []}   (modes vacio = todos)
         "buttons": [],
@@ -630,6 +635,11 @@ def _norm_touch(t):
     if t.get("camera_mode") not in ("drag", "vector"):
         t["camera_mode"] = "drag"
     t["sensitivity"] = _num(t.get("sensitivity"), 1.0, 0.05, 20.0)
+    t["zoom"] = bool(t.get("zoom"))
+    t["zoom_pos"] = _pos(t.get("zoom_pos"), [0.55, 0.45])
+    t["zoom_gap"] = _num(t.get("zoom_gap"), 0.12, 0.04, 0.6)
+    t["zoom_step"] = _num(t.get("zoom_step"), 0.03, 0.005, 0.3)
+    t["zoom_invert"] = bool(t.get("zoom_invert"))
     buttons = []
     for b in t.get("buttons") or []:
         if not isinstance(b, dict):

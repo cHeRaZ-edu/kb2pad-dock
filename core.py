@@ -354,7 +354,7 @@ class Mapper:
 
     def set_mouselook(self, on):
         self.mouselook = on
-        self.touch.cam_release()
+        self.touch.cam_stop()
         self.reset_mouse_motion()
         self.pressed -= set(self.cfg.mouselook_buttons)
         self.update_grab()
@@ -367,7 +367,7 @@ class Mapper:
         self.push()
 
     def radial_start(self, key):
-        self.touch.cam_release()           # el radial del control se queda con el mouse: se levanta el dedo de la camara
+        self.touch.cam_stop()              # el radial del control se queda con el mouse: se levanta el dedo de la camara
         self.radial_key = key
         self.radial_pos = [0.0, 0.0]
         self.radial_out = (0.0, 0.0)
@@ -423,6 +423,8 @@ class Mapper:
                         name = "WHEEL_UP" if ev.value > 0 else "WHEEL_DOWN"
                     else:
                         name = "WHEEL_RIGHT" if ev.value > 0 else "WHEEL_LEFT"
+                    if self.touch.wheel(name, abs(ev.value), self.mouselook):   # zoom por pellizco
+                        return
                     self.wheel_notch(C.WHEEL_CODES[name], abs(ev.value))
                 return
             if self.radial_key is None and ev.code in (e.REL_X, e.REL_Y):

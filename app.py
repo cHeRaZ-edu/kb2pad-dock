@@ -265,6 +265,10 @@ class BindingDialog(QDialog):
         self.note = QLineEdit(b.get("note", ""))
         form.addRow("Nota:", self.note)
 
+        self.enabled = QCheckBox("Activa (desmarcada = se queda guardada, pero el control la ignora)")
+        self.enabled.setChecked(bool(b.get("enabled", True)))
+        form.addRow("", self.enabled)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                    QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
@@ -310,6 +314,7 @@ class BindingDialog(QDialog):
             radial=self.radial.isChecked() and not cam and not mods,
             hold=round(self.hold.value(), 2),
             camera_only=cam,
+            enabled=self.enabled.isChecked(),
         )
 
 
@@ -394,7 +399,11 @@ class BindingsTab(QWidget):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.table.doubleClicked.connect(self.edit)
+        self.table.itemChanged.connect(self._item_changed)
+        self._filling = False
         lay.addWidget(self.table)
+        lay.addWidget(BindingDialog._hint("La casilla de cada tecla la activa o desactiva sin borrarla "
+                                          "(ej. para dejarle esa tecla a un toque en pantalla)."))
 
         row = QHBoxLayout()
         for text, slot in (("Agregar", self.add), ("Editar", self.edit),
@@ -506,6 +515,7 @@ class BindingsTab(QWidget):
     # ---------- tabla ----------
     def refresh(self, select=None):
         rows = self.bindings
+        self._filling = True
         self.table.setRowCount(len(rows))
         for r, b in enumerate(rows):
             if b.get("camera_only"):
@@ -524,10 +534,38 @@ class BindingsTab(QWidget):
                 kind,
                 b.get("note", ""),
             ]
+            on = b.get("enabled", True)
+            if not on:
+                cells[3] = f"Desactivada ({kind})"
             for c, text in enumerate(cells):
-                self.table.setItem(r, c, QTableWidgetItem(text))
+                it = QTableWidgetItem(text)
+                if c == 0:
+                    it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    it.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+                    it.setToolTip("Activa / desactivada (se queda guardada)")
+                if not on:
+                    it.setForeground(QColor(140, 140, 140))
+                    f = it.font()
+                    f.setItalic(True)
+                    it.setFont(f)
+                self.table.setItem(r, c, it)
+        self._filling = False
         if select is not None and 0 <= select < len(rows):
             self.table.selectRow(select)
+
+    def _item_changed(self, it):
+        """Casilla de la columna Tecla: activar / desactivar sin borrar."""
+        if self._filling or it.column() != 0:
+            return
+        r = it.row()
+        if not (0 <= r < len(self.bindings)):
+            return
+        on = it.checkState() == Qt.CheckState.Checked
+        if bool(self.bindings[r].get("enabled", True)) == on:
+            return
+        self.bindings[r]["enabled"] = on
+        QTimer.singleShot(0, lambda: self.refresh(r))     # repinta fuera de la señal
+        self.changed.emit()
 
     def current(self):
         rows = self.table.selectionModel().selectedRows()

@@ -117,8 +117,9 @@ def input_label(name):
 
 
 # ---------------------------------------------------------------- defaults
-def binding(inp, outs, note="", modifier=None, radial=False, hold=0.0, camera_only=False):
+def binding(inp, outs, note="", modifier=None, radial=False, hold=0.0, camera_only=False, enabled=True):
     return {
+        "enabled": bool(enabled),        # False = se queda guardada pero el control la ignora
         "input": inp,
         "outputs": list(outs),
         "modifier": list(modifier or []),
@@ -631,6 +632,7 @@ def _norm_bindings(items):
         nb.update(b)
         nb["outputs"] = list(nb.get("outputs") or [])
         nb["modifier"] = list(nb.get("modifier") or [])
+        nb["enabled"] = bool(nb.get("enabled", True))
         bl.append(nb)
     return bl
 
@@ -724,7 +726,7 @@ def validate(cfg):
         for i, b in enumerate(m.get("bindings") or [], 1):
             where = f"{mname}: asignacion {i} ({b.get('note') or b.get('input')})"
             inp = b.get("input", "")
-            if check(inp, where):
+            if check(inp, where) and b.get("enabled", True):     # las desactivadas no chocan con nada
                 mused.setdefault(inp + ("#cam" if b.get("camera_only") else ""), []).append(where)
             if not b.get("outputs"):
                 errors.append(f"{where}: no tiene salida")
@@ -771,7 +773,7 @@ def validate(cfg):
                 if b.get("modes") and m.get("name") not in b["modes"]:
                     continue
                 for bd in m.get("bindings") or []:
-                    if bd.get("input") in singles and not bd.get("camera_only"):
+                    if bd.get("input") in singles and not bd.get("camera_only") and bd.get("enabled", True):
                         clash.setdefault(bd["input"], []).append(m.get("name"))
             for n, ms in clash.items():
                 warnings.append(f"{where}: '{input_label(n)}' tambien es boton del control ({', '.join(ms)}); "

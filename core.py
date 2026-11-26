@@ -110,6 +110,8 @@ class EngineConfig:
         combos = {}             # tecla -> (modificador, salidas)
         radial_keys = {}        # tecla -> segundos antes de entrar al radial
         for b in bindings:
+            if not b.get("enabled", True):
+                continue                       # desactivada: guardada, pero el control la ignora
             code = k(b["input"])
             outs = tuple(OUT_CODES[o] for o in b["outputs"])
             mods = tuple(OUT_CODES[o] for o in b.get("modifier") or [])

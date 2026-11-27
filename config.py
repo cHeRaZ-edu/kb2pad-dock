@@ -357,8 +357,8 @@ DEFAULT_CONFIG = {
         "font_size": 10,
         "status_colors": True,              # colores segun el valor (temperatura, bateria, FPS)
         "fields": [[k, on] for k, on in (("temp", True), ("temps", True), ("battery", True),
-                                          ("device_fps", True), ("video_fps", True), ("soc", False),
-                                          ("gpu", False), ("phone", False), ("profile", True))],
+                                          ("device_fps", True), ("video_fps", True), ("lsfg", True),
+                                          ("soc", False), ("gpu", False), ("phone", False), ("profile", True))],
     },
 }
 
@@ -373,6 +373,7 @@ HUD_FIELDS = {
     "battery": "Bateria (barras y %)",
     "device_fps": "FPS del juego en el celular",
     "video_fps": "FPS del video que llega a la PC",
+    "lsfg": "Generacion de cuadros (Lossless Scaling: xN y FPS en pantalla)",
     "soc": "Procesador (modelo del chip)",
     "gpu": "GPU",
     "phone": "Modelo del telefono",

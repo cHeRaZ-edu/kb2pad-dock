@@ -3122,6 +3122,7 @@ class MainWindow(QMainWindow):
         self._last_crit_notify = -1e9
         self._video_fps = None
         self._fps_skipped = 0
+        self._lsfg_mult = None                    # xN de lsfg-vk en este scrcpy (None = apagado)
         self._hud_test_until = 0.0
         self.hud = HudClient(self, self.append_log)
         # datos del celular (modelo, chip, GPU) y FPS del juego en el celular
@@ -3570,11 +3571,14 @@ class MainWindow(QMainWindow):
         hud = self.cfg["hud"]
         ver = PT.scrcpy_version(C.tool_path(sc, "scrcpy"))
         cmd = C.build_scrcpy_cmd(sc, window, ver, self._game_keyboard,
-                                 print_fps=bool(hud.get("enabled", True) and C.hud_field_on(self.cfg, "video_fps")))
+                                 print_fps=bool(hud.get("enabled", True) and (
+                                     C.hud_field_on(self.cfg, "video_fps")
+                                     or (C.hud_field_on(self.cfg, "lsfg") and C.lsfg_active(sc, ver)))))
         env = QProcessEnvironment.systemEnvironment()
         overrides = C.scrcpy_env_overrides(sc, self._game_keyboard, ver)
         for k, v in overrides.items():
             env.insert(k, v)
+        self._lsfg_mult = None
         if sc.get("lsfg") and not IS_WINDOWS:
             dll, install = C.find_lsfg_dll() if C.lsfg_active(sc, ver) else (None, None)
             if C.lsfg_active(sc, ver) and not dll:
@@ -3587,6 +3591,7 @@ class MainWindow(QMainWindow):
                     "y elige \"lsfg-vk\"." if install else
                     "Instala Lossless Scaling en Steam y elige la beta \"lsfg-vk\" (Propiedades → Betas)."))
             elif C.lsfg_active(sc, ver):
+                self._lsfg_mult = int(overrides.get("LSFGVK_MULTIPLIER") or 2)
                 self.append_log(f"[juego] generacion de cuadros: x{overrides.get('LSFGVK_MULTIPLIER')} con lsfg-vk "
                                 f"(flow {overrides.get('LSFGVK_FLOW_SCALE')}"
                                 + (", rendimiento" if sc.get("lsfg_performance") else "") + ")")
@@ -3938,7 +3943,10 @@ class MainWindow(QMainWindow):
         info = self._thermal_info
         dev = self._device_info or {}
         dev_fps, vid_fps, skipped = self._dev_fps, self._video_fps, self._fps_skipped
+        lsfg = self._lsfg_mult
         if sample:
+            lsfg = lsfg or (int(self.cfg["scrcpy"].get("lsfg_multiplier") or 2) if self.cfg["scrcpy"].get("lsfg")
+                            else None)
             info = info or {"status": 0, "temps": {"piel": 41.3, "cpu": 71.0, "gpu": 58.0, "bateria": 38.5},
                             "battery_level": 72, "charging": True}
             dev = dev or {"phone": "Tu telefono", "soc": "Snapdragon (ejemplo)", "gpu": "Adreno (ejemplo)"}
@@ -3991,6 +3999,17 @@ class MainWindow(QMainWindow):
                        else ["-- fps", "key"]]
                 if skipped:
                     row.append([f"  ({skipped} saltados)", col(O)])
+                rows.append(row)
+            elif key == "lsfg":
+                if IS_WINDOWS:
+                    continue                      # en Windows lo hace la app de Lossless Scaling (su propio contador)
+                if not lsfg:
+                    rows.append([["LSFG ", "key"], ["apagado", "key"]])
+                    continue
+                row = [["LSFG ", "key"], [f"x{lsfg}", col(G)]]
+                if vid_fps is not None:
+                    # estimado: los cuadros reales que llegan por el multiplicador (lsfg-vk no reporta su conteo)
+                    row += [["  → ", "key"], [f"~{vid_fps * lsfg} fps", fps_c(vid_fps * lsfg)]]
                 rows.append(row)
             elif key == "soc":
                 rows.append([["CHIP ", "key"], [dev.get("soc") or "...", "text"]])
@@ -4119,6 +4138,7 @@ class MainWindow(QMainWindow):
     def _game_finished(self, *_):
         self.geo_timer.stop()
         self._video_fps = None
+        self._lsfg_mult = None
         if self._restart_video:
             self._restart_video = False
             QTimer.singleShot(400, self._launch_scrcpy)

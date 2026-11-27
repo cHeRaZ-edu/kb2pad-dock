@@ -252,6 +252,10 @@ kb2pad abre scrcpy dibujando con Vulkan y le pasa la configuracion por variables
 de lsfg-vk-ui. Se ve mejor con el juego a FPS estables (ej. 30 en calidad alta). El control se siente
 como a la tasa original del juego.
 
+En el HUD, el renglon **LSFG** muestra el multiplicador activo y los FPS estimados en pantalla
+(*VIDEO* × multiplicador, ej. `LSFG x2 → ~60 fps`); dice *apagado* si scrcpy abrio sin lsfg-vk. Es un
+estimado: lsfg-vk no reporta cuantos cuadros genera.
+
 ## Iniciar el juego
 
 Con **Iniciar juego** (o **Iniciar todo**) la app pregunta qué hacer:

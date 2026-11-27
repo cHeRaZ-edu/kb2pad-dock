@@ -306,6 +306,13 @@ DEFAULT_CONFIG = {
         "width": 1920,
         "height": 887,
         "force_x11": False,
+        # Generacion de cuadros con Lossless Scaling en Linux (lsfg-vk 2.0, capa de Vulkan): scrcpy 4.0+
+        # dibuja con Vulkan y la capa mete cuadros intermedios (30 fps del juego -> 60 en pantalla)
+        "lsfg": False,
+        "lsfg_multiplier": 2,               # 2 = un cuadro extra por cada cuadro real
+        "lsfg_flow_scale": 1.0,             # resolucion del calculo de movimiento (menos = mas rapido)
+        "lsfg_performance": False,          # modelo ligero (un poco menos de calidad)
+        "dgpu": False,                      # abrir scrcpy en la GPU dedicada (PRIME, laptops hibridas)
         "extra_args": "",
         "max_size": 0,                      # lado mayor del video en px (0 = resolucion original)
         "no_audio": False,                  # sin audio en la PC (suena el celular)
@@ -873,6 +880,11 @@ def effective_serial(sc):
     return (sc.get("serial") or "").strip()
 
 
+def lsfg_active(sc, version=None):
+    """Generacion de cuadros activa: pedida, en Linux y con scrcpy 4.0+ (SDL3, que dibuja con Vulkan)."""
+    return bool(sc.get("lsfg")) and os.name != "nt" and (version is None or tuple(version) >= (4, 0))
+
+
 def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled", print_fps=False):
     """window: (x, y, w, h) para abrir la ventana ahi (si no, la posicion fija si esta activada).
     version: (mayor, menor) de scrcpy; desde la 4.0 la ventana guarda la proporcion del video y no
@@ -905,6 +917,8 @@ def build_scrcpy_cmd(sc, window=None, version=None, keyboard="disabled", print_f
         x, y, w, h = (int(v) for v in window)
         cmd += [f"--window-x={x}", f"--window-y={y}", f"--window-width={w}", f"--window-height={h}"]
     extra = shlex.split(sc["extra_args"]) if sc.get("extra_args") else []
+    if lsfg_active(sc, version) and not any(t.startswith("--render-driver") for t in extra):
+        cmd.append("--render-driver=vulkan")      # lsfg-vk es una capa de Vulkan: con OpenGL no lo ve
     if (version and tuple(version) >= (4, 0) and sc.get("rotate_fit") == "screen"
             and "--no-window-aspect-ratio-lock" not in extra):
         cmd.append("--no-window-aspect-ratio-lock")
@@ -1087,9 +1101,26 @@ def wayland_session():
                                or bool(os.environ.get("WAYLAND_DISPLAY")))
 
 
-def scrcpy_env_overrides(sc, keyboard="disabled"):
+def scrcpy_env_overrides(sc, keyboard="disabled", version=None):
     """X11 si se pide, o en Wayland si hay que acomodar la ventana o saber si tiene el foco (escudo del
-    teclado): xdotool no ve ventanas Wayland. SDL3 (scrcpy 3.3+) lee SDL_VIDEO_DRIVER; SDL2 SDL_VIDEODRIVER."""
+    teclado): xdotool no ve ventanas Wayland. SDL3 (scrcpy 3.3+) lee SDL_VIDEO_DRIVER; SDL2 SDL_VIDEODRIVER.
+    Ademas: GPU dedicada (PRIME) y la configuracion de lsfg-vk por variables (no toca tus perfiles)."""
+    env = {}
     x11 = sc.get("force_x11") or (wayland_session() and (sc.get("rotate_fit", "screen") != "off"
                                                          or keyboard != "disabled"))
-    return {"SDL_VIDEODRIVER": "x11", "SDL_VIDEO_DRIVER": "x11"} if x11 else {}
+    if x11:
+        env.update({"SDL_VIDEODRIVER": "x11", "SDL_VIDEO_DRIVER": "x11"})
+    if os.name == "nt":
+        return env
+    if sc.get("dgpu"):
+        # lo mismo que hace prime-run (NVIDIA) + DRI_PRIME para GPUs AMD/Intel con Mesa
+        env.update({"__NV_PRIME_RENDER_OFFLOAD": "1", "__VK_LAYER_NV_optimus": "NVIDIA_only",
+                    "__GLX_VENDOR_LIBRARY_NAME": "nvidia", "DRI_PRIME": "1"})
+    if lsfg_active(sc, version):
+        env.update({"LSFGVK_ENV": "1",
+                    "LSFGVK_MULTIPLIER": str(min(max(int(sc.get("lsfg_multiplier") or 2), 2), 4)),
+                    "LSFGVK_FLOW_SCALE": f"{min(max(float(sc.get('lsfg_flow_scale') or 1.0), 0.25), 1.0):g}",
+                    "LSFGVK_PERFORMANCE_MODE": "1" if sc.get("lsfg_performance") else "0"})
+    else:
+        env["DISABLE_LSFGVK"] = "1"         # que un perfil tuyo de lsfg-vk-ui no se active sin pedirlo
+    return env

@@ -1143,6 +1143,39 @@ class ScrcpyTab(QWidget):
         self.force_x11.setVisible(not IS_WINDOWS)
         lay.addWidget(box)
 
+        box = QGroupBox("Generacion de cuadros (Lossless Scaling)")
+        form = QFormLayout(box)
+        if IS_WINDOWS:
+            form.addRow(self._hint("En Windows abre la app Lossless Scaling, elige la ventana de scrcpy y activa "
+                                   "LSFG X2. kb2pad no necesita hacer nada."))
+        self.lsfg = QCheckBox("Duplicar los cuadros con lsfg-vk (ej. juego a 30 fps -> 60 en pantalla)")
+        form.addRow(self.lsfg)
+        self.lsfg_mult = QComboBox()
+        for n, text in ((2, "x2 (30 -> 60)"), (3, "x3 (30 -> 90)"), (4, "x4 (30 -> 120)")):
+            self.lsfg_mult.addItem(text, n)
+        form.addRow("Multiplicador:", self.lsfg_mult)
+        self.lsfg_flow = _dspin(0.25, 1.0, 0.05, 2)
+        form.addRow("Flow scale:", self.lsfg_flow)
+        self.lsfg_perf = QCheckBox("Modo rendimiento (modelo mas ligero, un poco menos de calidad)")
+        form.addRow(self.lsfg_perf)
+        self.dgpu = QCheckBox("Abrir scrcpy en la GPU dedicada (como prime-run; laptops con dos GPUs)")
+        form.addRow(self.dgpu)
+        row = QHBoxLayout()
+        b_check = QPushButton("Revisar lsfg-vk")
+        b_check.clicked.connect(self.check_lsfg)
+        row.addWidget(b_check)
+        row.addStretch()
+        form.addRow(row)
+        form.addRow("", self._hint(
+            "Necesita: Lossless Scaling en Steam con la beta \"lsfg-vk\", lsfg-vk 2.0 (sudo pacman -S lsfg-vk) y "
+            "scrcpy 4.0+. kb2pad abre scrcpy con Vulkan y le pasa la configuracion por variables (no toca tus "
+            "perfiles de lsfg-vk-ui). Para que se vea parejo el juego debe ir a FPS estables (ej. 30 en alta). "
+            "Se aplica al abrir el juego."))
+        if IS_WINDOWS:
+            for w in (self.lsfg, self.lsfg_mult, self.lsfg_flow, self.lsfg_perf, self.dgpu, b_check):
+                w.setEnabled(False)
+        lay.addWidget(box)
+
         box = QGroupBox("Al iniciar el juego")
         form = QFormLayout(box)
         self.ask_on_start = QCheckBox("Preguntar al iniciar: abrir una app (con buscador) o solo mostrar la pantalla")
@@ -1198,8 +1231,16 @@ class ScrcpyTab(QWidget):
         self.enc_timer.setSingleShot(True)
         self.enc_timer.timeout.connect(self.enc_proc.kill)
         for w in (self.no_mipmaps, self.stay_awake, self.borderless, self.set_geometry, self.force_x11,
-                  self.launch_app, self.wait_landscape, self.ask_on_start):
+                  self.launch_app, self.wait_landscape, self.ask_on_start, self.lsfg, self.lsfg_perf, self.dgpu):
             w.toggled.connect(self._changed)
+        self.lsfg.toggled.connect(self._sync)
+        self.lsfg_mult.currentIndexChanged.connect(self._changed)
+        self.lsfg_flow.valueChanged.connect(self._changed)
+        self.lsfg_proc = QProcess(self)
+        self.lsfg_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.lsfg_proc.finished.connect(self._lsfg_checked)
+        self.lsfg_proc.errorOccurred.connect(self._lsfg_check_failed)
+        no_console(self.lsfg_proc)
         self.rotate_fit.currentIndexChanged.connect(self._changed)
         self.connection.currentIndexChanged.connect(self._changed)
         self.wifi_address.textChanged.connect(self._changed)
@@ -1226,6 +1267,9 @@ class ScrcpyTab(QWidget):
         self.wifi_hint.setVisible(self.connection.currentData() == "wifi")
         for chk in self.lowlat_checks.values():
             chk.setEnabled(self.lowlat.isChecked())
+        if not IS_WINDOWS:
+            for w in (self.lsfg_mult, self.lsfg_flow, self.lsfg_perf):
+                w.setEnabled(self.lsfg.isChecked())
 
     def _changed(self, *_):
         self._update_preview()
@@ -1247,6 +1291,11 @@ class ScrcpyTab(QWidget):
             "x": self.x.value(), "y": self.y.value(),
             "width": self.w.value(), "height": self.h.value(),
             "force_x11": self.force_x11.isChecked(),
+            "lsfg": self.lsfg.isChecked(),
+            "lsfg_multiplier": self.lsfg_mult.currentData() or 2,
+            "lsfg_flow_scale": round(self.lsfg_flow.value(), 2),
+            "lsfg_performance": self.lsfg_perf.isChecked(),
+            "dgpu": self.dgpu.isChecked(),
             "extra_args": self.extra.text().strip(),
             "launch_app": self.launch_app.isChecked(),
             "package": self.package.text().strip(),
@@ -1467,6 +1516,27 @@ class ScrcpyTab(QWidget):
             chk.setChecked(False)
         self.lowlat.setChecked(False)
 
+    def check_lsfg(self):
+        """Corre lsfg-vk-cli healthcheck y muestra el resultado."""
+        if self.lsfg_proc.state() != QProcess.ProcessState.NotRunning:
+            return
+        exe = shutil.which("lsfg-vk-cli") or str(Path.home() / ".local/bin/lsfg-vk-cli")
+        self.lsfg_proc.start(exe, ["healthcheck"])
+
+    def _lsfg_checked(self, code, _status):
+        out = bytes(self.lsfg_proc.readAllStandardOutput()).decode(errors="ignore").strip()
+        ver = self._version()
+        scr = (f"scrcpy {ver[0]}.{ver[1]}" + ("" if ver >= (4, 0) else "  ← necesitas 4.0 o mas nuevo (SDL3)")
+               if ver else "scrcpy: no encontrado")
+        box = QMessageBox.information if code == 0 else QMessageBox.warning
+        box(self, "lsfg-vk", f"{out or 'Sin salida'}\n\n{scr}\n\nRecuerda: Lossless Scaling en Steam con la "
+                             "beta \"lsfg-vk\" seleccionada (Propiedades → Betas).")
+
+    def _lsfg_check_failed(self, _err):
+        if self.lsfg_proc.state() == QProcess.ProcessState.NotRunning:
+            QMessageBox.warning(self, "lsfg-vk", "No encontre lsfg-vk-cli.\n\nInstalalo con: sudo pacman -S lsfg-vk "
+                                "(o desde lsfg-vk.dev).")
+
     def _update_preview(self):
         try:
             vals = self.values()
@@ -1476,7 +1546,8 @@ class ScrcpyTab(QWidget):
                 g = (QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()).geometry()
                 window = (g.x(), g.y(), g.width(), g.height())
             cmd = C.build_scrcpy_cmd(vals, window, self._version(), keyboard=self.keyboard_mode)
-            env = C.scrcpy_env_overrides(vals, self.keyboard_mode)
+            env = C.scrcpy_env_overrides(vals, self.keyboard_mode, self._version())
+            env.pop("DISABLE_LSFGVK", None)          # detalle interno, no estorba en la vista previa
             prefix = " ".join(f"{k}={v}" for k, v in env.items())
             self.preview.setPlainText((prefix + " " if prefix else "") + " ".join(cmd))
         except ValueError as exc:
@@ -1498,6 +1569,11 @@ class ScrcpyTab(QWidget):
         self.w.setValue(int(sc["width"]))
         self.h.setValue(int(sc["height"]))
         self.force_x11.setChecked(bool(sc["force_x11"]))
+        self.lsfg.setChecked(bool(sc.get("lsfg")))
+        self.lsfg_mult.setCurrentIndex(max(0, self.lsfg_mult.findData(int(sc.get("lsfg_multiplier") or 2))))
+        self.lsfg_flow.setValue(float(sc.get("lsfg_flow_scale") or 1.0))
+        self.lsfg_perf.setChecked(bool(sc.get("lsfg_performance")))
+        self.dgpu.setChecked(bool(sc.get("dgpu")))
         self.extra.setText(sc["extra_args"])
         self.launch_app.setChecked(bool(sc["launch_app"]))
         self.package.setText(sc["package"])
@@ -3480,11 +3556,20 @@ class MainWindow(QMainWindow):
                             "el juego tiene el foco")
         self.geo_wid = None
         hud = self.cfg["hud"]
-        cmd = C.build_scrcpy_cmd(sc, window, PT.scrcpy_version(C.tool_path(sc, "scrcpy")), self._game_keyboard,
+        ver = PT.scrcpy_version(C.tool_path(sc, "scrcpy"))
+        cmd = C.build_scrcpy_cmd(sc, window, ver, self._game_keyboard,
                                  print_fps=bool(hud.get("enabled", True) and C.hud_field_on(self.cfg, "video_fps")))
         env = QProcessEnvironment.systemEnvironment()
-        for k, v in C.scrcpy_env_overrides(sc, self._game_keyboard).items():
+        overrides = C.scrcpy_env_overrides(sc, self._game_keyboard, ver)
+        for k, v in overrides.items():
             env.insert(k, v)
+        if sc.get("lsfg") and not IS_WINDOWS:
+            if C.lsfg_active(sc, ver):
+                self.append_log(f"[juego] generacion de cuadros: x{overrides.get('LSFGVK_MULTIPLIER')} con lsfg-vk "
+                                f"(flow {overrides.get('LSFGVK_FLOW_SCALE')}"
+                                + (", rendimiento" if sc.get("lsfg_performance") else "") + ")")
+            else:
+                self.append_log("[juego] generacion de cuadros apagada: necesita scrcpy 4.0 o mas nuevo")
         self.game.setProcessEnvironment(env)
         self.append_log("[juego] " + " ".join(cmd))
         self._game_gen += 1

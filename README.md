@@ -238,6 +238,20 @@ Los toques se conectan solos cuando el control y el juego están abiertos: kb2pa
 están conectados, una tecla que usa un toque deja de ir al control; si no se conectan, todo sigue
 funcionando con el control.
 
+## Generacion de cuadros (Lossless Scaling)
+
+Para jugar a 30 fps y ver 60 (o mas) en la PC. En **Windows** abre la app Lossless Scaling, elige la
+ventana de scrcpy y activa LSFG X2. En **Linux** kb2pad lo hace con [lsfg-vk](https://lsfg-vk.dev):
+
+1. Lossless Scaling en Steam con la beta **lsfg-vk** seleccionada (Propiedades → Betas).
+2. lsfg-vk 2.0 (`sudo pacman -S lsfg-vk` en CachyOS/Arch) y scrcpy 4.0 o mas nuevo.
+3. En la pestaña **Juego**, activa *Duplicar los cuadros con lsfg-vk*. Si tu laptop tiene dos GPUs,
+   marca tambien *Abrir scrcpy en la GPU dedicada*. *Revisar lsfg-vk* corre el healthcheck.
+
+kb2pad abre scrcpy dibujando con Vulkan y le pasa la configuracion por variables, sin tocar tus perfiles
+de lsfg-vk-ui. Se ve mejor con el juego a FPS estables (ej. 30 en calidad alta). El control se siente
+como a la tasa original del juego.
+
 ## Iniciar el juego
 
 Con **Iniciar juego** (o **Iniciar todo**) la app pregunta qué hacer:

@@ -880,6 +880,48 @@ def effective_serial(sc):
     return (sc.get("serial") or "").strip()
 
 
+LSFG_DLL = "lsfg-vk.dll"         # lo trae Lossless Scaling en Steam con la beta "lsfg-vk"
+
+
+def steam_libraries():
+    """Carpetas steamapps de todas tus bibliotecas de Steam (nativo, ~/.steam y Flatpak)."""
+    home = Path.home()
+    roots = [home / ".local/share/Steam", home / ".steam/steam", home / ".steam/root",
+             home / ".var/app/com.valvesoftware.Steam/.local/share/Steam"]
+    libs = []
+    for root in roots:
+        apps = root / "steamapps"
+        if apps.is_dir():
+            libs.append(apps)
+        vdf = apps / "libraryfolders.vdf"
+        try:
+            for m in re.finditer(r'"path"\s+"([^"]+)"', vdf.read_text(errors="ignore")):
+                libs.append(Path(m.group(1).replace("\\\\", "\\")) / "steamapps")
+        except OSError:
+            pass
+    out = []
+    for lib in libs:
+        try:
+            real = lib.resolve()
+        except OSError:
+            continue
+        if real.is_dir() and real not in out:
+            out.append(real)
+    return out
+
+
+def find_lsfg_dll():
+    """(ruta de lsfg-vk.dll o None, carpeta de Lossless Scaling si esta instalado pero sin ese dll)."""
+    install = None
+    for lib in steam_libraries():
+        ls = lib / "common" / "Lossless Scaling"
+        if (ls / LSFG_DLL).is_file():
+            return str(ls / LSFG_DLL), str(ls)
+        if ls.is_dir() and install is None:
+            install = str(ls)
+    return None, install
+
+
 def lsfg_active(sc, version=None):
     """Generacion de cuadros activa: pedida, en Linux y con scrcpy 4.0+ (SDL3, que dibuja con Vulkan)."""
     return bool(sc.get("lsfg")) and os.name != "nt" and (version is None or tuple(version) >= (4, 0))
@@ -1117,6 +1159,9 @@ def scrcpy_env_overrides(sc, keyboard="disabled", version=None):
         env.update({"__NV_PRIME_RENDER_OFFLOAD": "1", "__VK_LAYER_NV_optimus": "NVIDIA_only",
                     "__GLX_VENDOR_LIBRARY_NAME": "nvidia", "DRI_PRIME": "1"})
     if lsfg_active(sc, version):
+        dll, _install = find_lsfg_dll()
+        if dll:
+            env["LSFGVK_DLL_PATH"] = dll
         env.update({"LSFGVK_ENV": "1",
                     "LSFGVK_MULTIPLIER": str(min(max(int(sc.get("lsfg_multiplier") or 2), 2), 4)),
                     "LSFGVK_FLOW_SCALE": f"{min(max(float(sc.get('lsfg_flow_scale') or 1.0), 0.25), 1.0):g}",

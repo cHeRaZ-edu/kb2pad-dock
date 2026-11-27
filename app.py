@@ -1521,6 +1521,11 @@ class ScrcpyTab(QWidget):
         if self.lsfg_proc.state() != QProcess.ProcessState.NotRunning:
             return
         exe = shutil.which("lsfg-vk-cli") or str(Path.home() / ".local/bin/lsfg-vk-cli")
+        env = QProcessEnvironment.systemEnvironment()
+        dll, _install = C.find_lsfg_dll()
+        if dll:
+            env.insert("LSFGVK_DLL_PATH", dll)
+        self.lsfg_proc.setProcessEnvironment(env)
         self.lsfg_proc.start(exe, ["healthcheck"])
 
     def _lsfg_checked(self, code, _status):
@@ -1528,9 +1533,16 @@ class ScrcpyTab(QWidget):
         ver = self._version()
         scr = (f"scrcpy {ver[0]}.{ver[1]}" + ("" if ver >= (4, 0) else "  ← necesitas 4.0 o mas nuevo (SDL3)")
                if ver else "scrcpy: no encontrado")
-        box = QMessageBox.information if code == 0 else QMessageBox.warning
-        box(self, "lsfg-vk", f"{out or 'Sin salida'}\n\n{scr}\n\nRecuerda: Lossless Scaling en Steam con la "
-                             "beta \"lsfg-vk\" seleccionada (Propiedades → Betas).")
+        dll, install = C.find_lsfg_dll()
+        if dll:
+            dll_txt = f"lsfg-vk.dll: {dll}"
+        elif install:
+            dll_txt = (f"Lossless Scaling esta en {install}, pero falta lsfg-vk.dll: en Steam ve a Propiedades → "
+                       "Betas y elige \"lsfg-vk\".")
+        else:
+            dll_txt = "No encontre Lossless Scaling en tus bibliotecas de Steam."
+        box = QMessageBox.information if code == 0 and dll else QMessageBox.warning
+        box(self, "lsfg-vk", f"{out or 'Sin salida'}\n\n{dll_txt}\n{scr}")
 
     def _lsfg_check_failed(self, _err):
         if self.lsfg_proc.state() == QProcess.ProcessState.NotRunning:
@@ -3564,7 +3576,17 @@ class MainWindow(QMainWindow):
         for k, v in overrides.items():
             env.insert(k, v)
         if sc.get("lsfg") and not IS_WINDOWS:
-            if C.lsfg_active(sc, ver):
+            dll, install = C.find_lsfg_dll() if C.lsfg_active(sc, ver) else (None, None)
+            if C.lsfg_active(sc, ver) and not dll:
+                # sin el dll lsfg-vk tumba a scrcpy: mejor abrirlo sin generacion de cuadros y avisar
+                env.remove("LSFGVK_ENV")
+                env.insert("DISABLE_LSFGVK", "1")
+                cmd = [t for t in cmd if t != "--render-driver=vulkan"]
+                self.append_log("[juego] generacion de cuadros apagada: no encontre lsfg-vk.dll. " + (
+                    f"Lossless Scaling esta en {install} pero sin la beta: en Steam ve a Propiedades → Betas "
+                    "y elige \"lsfg-vk\"." if install else
+                    "Instala Lossless Scaling en Steam y elige la beta \"lsfg-vk\" (Propiedades → Betas)."))
+            elif C.lsfg_active(sc, ver):
                 self.append_log(f"[juego] generacion de cuadros: x{overrides.get('LSFGVK_MULTIPLIER')} con lsfg-vk "
                                 f"(flow {overrides.get('LSFGVK_FLOW_SCALE')}"
                                 + (", rendimiento" if sc.get("lsfg_performance") else "") + ")")
